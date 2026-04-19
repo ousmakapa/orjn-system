@@ -1046,7 +1046,20 @@ bulkImportBtn.addEventListener("click", async () => {
     const monitor = toImport[i];
     bulkImportBtn.textContent = `Importing ${i + 1} / ${n}…`;
     try {
-      await importMonitorProduct(monitor);
+      if (monitor.shopifyProductId) {
+        throw new Error("Already imported to Shopify; this monitor is kept for ongoing sync.");
+      }
+      const created = await importMonitorProduct(monitor);
+      await chrome.runtime.sendMessage({
+        type: "update-monitor",
+        payload: {
+          id: monitor.id,
+          shopifyProductId: created.id,
+          shopifyImportedAt: new Date().toISOString(),
+          shopifyLastSyncAt: new Date().toISOString(),
+          shopifySyncStatus: "ok"
+        }
+      });
       succeeded.push(monitor.id);
       const pd = monitor.productData || {};
       await addLog({
@@ -1054,7 +1067,7 @@ bulkImportBtn.addEventListener("click", async () => {
         title: [pd.brand, pd.sku].filter(Boolean).join(" ") || monitor.name,
         productName: pd.name || monitor.name || "",
         brand: pd.brand || "", sku: pd.sku || "",
-        details: ["Imported to Shopify"],
+        details: ["Imported to Shopify", "Monitor kept for ongoing price/size sync"],
         monitorId: monitor.id, url: monitor.url
       }).catch(() => {});
     } catch (e) {
@@ -1070,26 +1083,33 @@ bulkImportBtn.addEventListener("click", async () => {
           reason = `Shopify rejected: ${msgs}`;
         }
       } catch (_) {}
+      const pd = monitor.productData || {};
+      await addLog({
+        type: "error",
+        title: [pd.brand, pd.sku].filter(Boolean).join(" ") || monitor.name,
+        productName: pd.name || monitor.name || "",
+        brand: pd.brand || "",
+        sku: pd.sku || "",
+        details: [reason],
+        monitorId: monitor.id,
+        url: monitor.url
+      }).catch(() => {});
       failed.push({ name: monitor.name, url: monitor.url, reason });
     }
   }
 
   // Only delete successfully imported monitors — failed ones stay
-  if (succeeded.length) {
-    await chrome.runtime.sendMessage({ type: "delete-monitors-batch", monitorIds: succeeded });
-    succeeded.forEach(id => checkedIds.delete(id));
-    if (succeeded.includes(selectedMonitorId)) { selectedMonitorId = null; monitorDetail.style.display = "none"; }
-  }
+  succeeded.forEach(id => checkedIds.delete(id));
 
   await loadDashboard();
   await refreshUndoImportBtn();
 
   if (failed.length && succeeded.length) {
-    alert(`✓ Imported ${succeeded.length} / ${n}.\n\n❌ Failed (${failed.length}) — still in dashboard:\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
+    alert(`✓ Imported ${succeeded.length} / ${n}.\n\nImported monitors were kept for ongoing Shopify sync.\n\n❌ Failed (${failed.length}):\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
   } else if (failed.length) {
-    alert(`❌ All ${n} imports failed — nothing removed:\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
+    alert(`❌ All ${n} imports failed:\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
   } else {
-    alert(`✓ Imported ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""} to Shopify as drafts.`);
+    alert(`✓ Imported ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""} to Shopify as drafts. Monitors were kept for ongoing sync.`);
   }
 });
 

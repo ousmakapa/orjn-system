@@ -1310,11 +1310,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.type === "restore-monitor") {
         await withStorageLock(async () => {
           const monitors = await getMonitors();
-          // Avoid duplicates by id
-          if (!monitors.find(m => m.id === message.monitor.id)) {
-            monitors.unshift(message.monitor);
-            await saveMonitors(monitors);
+          const idx = monitors.findIndex(m => m.id === message.monitor.id);
+          const restored = {
+            ...message.monitor,
+            shopifyProductId: "",
+            shopifyImportedAt: "",
+            shopifyLastSyncAt: "",
+            shopifySyncStatus: "idle"
+          };
+          if (idx === -1) {
+            monitors.unshift(restored);
+          } else {
+            monitors[idx] = { ...monitors[idx], ...restored };
           }
+          await saveMonitors(monitors);
         });
         sendResponse({ ok: true });
         return;

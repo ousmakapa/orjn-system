@@ -1,3 +1,5 @@
+import { addLog } from "./shared.js";
+
 const IMPORT_HISTORY_KEY = "shopifyImportHistory";
 const SHOPIFY_ENV_KEYS = {
   shop: "SHOPIFY_SHOP",
@@ -11,6 +13,43 @@ const SHOPIFY_DEFAULTS = {
   apiVersion: "2025-01"
 };
 let envConfigPromise = null;
+
+function getMonitorLogMeta(monitor = {}) {
+  const pd = monitor.productData || {};
+  const brand = pd.brand || "";
+  const sku = pd.sku || "";
+  return {
+    title: [brand, sku].filter(Boolean).join(" ") || monitor.name || "Shopify",
+    productName: pd.name || monitor.name || "",
+    brand,
+    sku,
+    monitorId: monitor.id,
+    url: monitor.url
+  };
+}
+
+function formatShopifyError(error) {
+  let reason = error?.message || String(error) || "Unknown error";
+  try {
+    const match = reason.match(/\d{3}: (.+)$/s);
+    if (match) {
+      const parsed = JSON.parse(match[1]);
+      const msgs = parsed.errors
+        ? Object.entries(parsed.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`).join(" | ")
+        : JSON.stringify(parsed);
+      reason = `Shopify rejected: ${msgs}`;
+    }
+  } catch (_) {}
+  return reason;
+}
+
+async function logShopifyError(monitor, details) {
+  await addLog({
+    type: "error",
+    ...getMonitorLogMeta(monitor),
+    details
+  }).catch(() => {});
+}
 
 // ── Color normalization ────────────────────────────────────────────────────
 const COLOR_MAP = {
@@ -223,10 +262,14 @@ export async function deleteProduct(productId) {
   const token = await getAccessToken();
   if (!token) throw new Error("Not connected to Shopify");
   const { shop, apiVersion } = await getShopifyConfig();
-  await fetch(`https://${shop}/admin/api/${apiVersion}/products/${productId}.json`, {
+  const res = await fetch(`https://${shop}/admin/api/${apiVersion}/products/${productId}.json`, {
     method: "DELETE",
     headers: { "X-Shopify-Access-Token": token }
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Shopify API ${res.status}: ${body}`);
+  }
 }
 
 // Fetches all existing vendors, product_types, and tags from the store
@@ -307,55 +350,72 @@ async function findProductBySkuPrefix(baseSku) {
 }
 
 export async function updateShopifyForMonitor(monitor, liveData) {
-  if (!await isConnected()) return;
-  const baseSku = monitor.productData?.sku;
-  if (!baseSku) return;
+  try {
+    if (!await isConnected()) return;
+    const baseSku = monitor.productData?.sku;
+    if (!baseSku) return;
 
-  const mapping = await getSkuMapping();
-  let productId = mapping[baseSku];
-  let product = null;
+    const mapping = await getSkuMapping();
+    let productId = mapping[baseSku];
+    let product = null;
 
-  if (productId) {
-    try {
-      const data = await shopifyFetch(`/products/${productId}.json?fields=id,variants`);
-      product = data.product;
-    } catch (_) { productId = null; }
-  }
-
-  if (!product) {
-    product = await findProductBySkuPrefix(baseSku);
-    if (product) { mapping[baseSku] = product.id; await saveSkuMapping(mapping); }
-  }
-
-  if (!product?.variants?.length) return;
-
-  const price = liveData.price != null ? String(liveData.price) : null;
-  const compareAt = liveData.compareAt != null ? String(liveData.compareAt) : null;
-  const inStock = new Set(liveData.inStock || []);
-  const outOfStock = new Set(liveData.outOfStock || []);
-  const locations = await getLocations();
-  const locationId = locations[0]?.id;
-  const prefix = `${baseSku}-`;
-
-  for (const variant of product.variants) {
-    // Update price on every variant
-    if (price !== null) {
-      const update = { id: variant.id, price };
-      if (compareAt !== null) update.compare_at_price = compareAt;
-      await shopifyFetch(`/variants/${variant.id}.json`, {
-        method: "PUT",
-        body: JSON.stringify({ variant: update })
-      }).catch(() => {});
+    if (productId) {
+      try {
+        const data = await shopifyFetch(`/products/${productId}.json?fields=id,variants`);
+        product = data.product;
+      } catch (_) { productId = null; }
     }
-    // Update inventory per size (matched by SKU suffix = US size)
-    if (locationId && variant.sku?.startsWith(prefix)) {
-      const usSize = variant.sku.slice(prefix.length);
-      if (inStock.has(usSize)) {
-        await setInventoryLevel(variant.inventory_item_id, locationId, 10).catch(() => {});
-      } else if (outOfStock.has(usSize)) {
-        await setInventoryLevel(variant.inventory_item_id, locationId, 0).catch(() => {});
+
+    if (!product) {
+      product = await findProductBySkuPrefix(baseSku);
+      if (product) { mapping[baseSku] = product.id; await saveSkuMapping(mapping); }
+    }
+
+    if (!product?.variants?.length) {
+      throw new Error(`No Shopify product found for SKU ${baseSku}`);
+    }
+
+    const price = liveData.price != null ? String(liveData.price) : null;
+    const hasCompareAt = Object.prototype.hasOwnProperty.call(liveData || {}, "compareAt");
+    const compareAt = liveData.compareAt != null ? String(liveData.compareAt) : null;
+    const inStock = new Set(liveData.inStock || []);
+    const outOfStock = new Set(liveData.outOfStock || []);
+    const locations = await getLocations();
+    const locationId = locations[0]?.id;
+    const prefix = `${baseSku}-`;
+    const errors = [];
+
+    for (const variant of product.variants) {
+      if (price !== null) {
+        const update = { id: variant.id, price };
+        if (hasCompareAt) update.compare_at_price = compareAt;
+        await shopifyFetch(`/variants/${variant.id}.json`, {
+          method: "PUT",
+          body: JSON.stringify({ variant: update })
+        }).catch((error) => {
+          errors.push(`Price update failed for ${variant.sku || variant.id}: ${formatShopifyError(error)}`);
+        });
+      }
+      if (locationId && variant.sku?.startsWith(prefix)) {
+        const usSize = variant.sku.slice(prefix.length);
+        if (inStock.has(usSize)) {
+          await setInventoryLevel(variant.inventory_item_id, locationId, 10).catch((error) => {
+            errors.push(`In-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
+          });
+        } else if (outOfStock.has(usSize)) {
+          await setInventoryLevel(variant.inventory_item_id, locationId, 0).catch((error) => {
+            errors.push(`Out-of-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
+          });
+        }
       }
     }
+
+    if (errors.length) {
+      throw new Error(errors.join(" | "));
+    }
+  } catch (error) {
+    await logShopifyError(monitor, [formatShopifyError(error)]);
+    throw error;
   }
 }
 
