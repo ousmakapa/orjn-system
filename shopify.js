@@ -12,7 +12,10 @@ const SHOPIFY_DEFAULTS = {
   clientId: "bf0dbb55084b776cfeab72d1a69a8436",
   apiVersion: "2025-01"
 };
+const SHOPIFY_CACHE_TTL_MS = 5 * 60 * 1000;
 let envConfigPromise = null;
+let locationsCache = null;
+let metadataCache = null;
 
 function getMonitorLogMeta(monitor = {}) {
   const pd = monitor.productData || {};
@@ -49,6 +52,10 @@ async function logShopifyError(monitor, details) {
     ...getMonitorLogMeta(monitor),
     details
   }).catch(() => {});
+}
+
+function isFreshCacheEntry(entry) {
+  return !!entry && (Date.now() - entry.timestamp) < SHOPIFY_CACHE_TTL_MS;
 }
 
 // ── Color normalization ────────────────────────────────────────────────────
@@ -223,6 +230,8 @@ export async function connectShopify(clientSecret) {
 }
 
 export async function disconnectShopify() {
+  locationsCache = null;
+  metadataCache = null;
   await chrome.storage.local.remove(["shopifyToken"]);
 }
 
@@ -246,8 +255,11 @@ async function shopifyFetch(path, options = {}) {
 }
 
 export async function getLocations() {
+  if (isFreshCacheEntry(locationsCache)) return locationsCache.value;
   const data = await shopifyFetch("/locations.json");
-  return data.locations || [];
+  const locations = data.locations || [];
+  locationsCache = { value: locations, timestamp: Date.now() };
+  return locations;
 }
 
 export async function createProduct(product) {
@@ -255,6 +267,7 @@ export async function createProduct(product) {
     method: "POST",
     body: JSON.stringify({ product })
   });
+  metadataCache = null;
   return data.product;
 }
 
@@ -270,10 +283,18 @@ export async function deleteProduct(productId) {
     const body = await res.text().catch(() => "");
     throw new Error(`Shopify API ${res.status}: ${body}`);
   }
+  metadataCache = null;
+}
+
+async function getProductById(productId) {
+  if (!productId) return null;
+  const data = await shopifyFetch(`/products/${productId}.json?fields=id,variants`);
+  return data.product || null;
 }
 
 // Fetches all existing vendors, product_types, and tags from the store
 export async function getShopifyMetadata() {
+  if (isFreshCacheEntry(metadataCache)) return metadataCache.value;
   const vendors = new Set();
   const types = new Set();
   const tags = new Set();
@@ -300,11 +321,13 @@ export async function getShopifyMetadata() {
     pageInfo = nextMatch ? nextMatch[1] : null;
   }
 
-  return {
+  const result = {
     vendors: [...vendors].sort(),
     types: [...types].sort(),
     tags: [...tags].sort()
   };
+  metadataCache = { value: result, timestamp: Date.now() };
+  return result;
 }
 
 // Match a value case-insensitively against an existing Shopify list, return exact casing if found
@@ -356,13 +379,16 @@ export async function updateShopifyForMonitor(monitor, liveData) {
     if (!baseSku) return;
 
     const mapping = await getSkuMapping();
-    let productId = mapping[baseSku];
+    let productId = monitor.shopifyProductId || mapping[baseSku];
     let product = null;
 
     if (productId) {
       try {
-        const data = await shopifyFetch(`/products/${productId}.json?fields=id,variants`);
-        product = data.product;
+        product = await getProductById(productId);
+        if (product && mapping[baseSku] !== product.id) {
+          mapping[baseSku] = product.id;
+          await saveSkuMapping(mapping);
+        }
       } catch (_) { productId = null; }
     }
 
@@ -385,30 +411,38 @@ export async function updateShopifyForMonitor(monitor, liveData) {
     const prefix = `${baseSku}-`;
     const errors = [];
 
-    for (const variant of product.variants) {
+    await Promise.all(product.variants.map(async (variant) => {
+      const tasks = [];
       if (price !== null) {
         const update = { id: variant.id, price };
         if (hasCompareAt) update.compare_at_price = compareAt;
-        await shopifyFetch(`/variants/${variant.id}.json`, {
-          method: "PUT",
-          body: JSON.stringify({ variant: update })
-        }).catch((error) => {
-          errors.push(`Price update failed for ${variant.sku || variant.id}: ${formatShopifyError(error)}`);
-        });
+        tasks.push(
+          shopifyFetch(`/variants/${variant.id}.json`, {
+            method: "PUT",
+            body: JSON.stringify({ variant: update })
+          }).catch((error) => {
+            errors.push(`Price update failed for ${variant.sku || variant.id}: ${formatShopifyError(error)}`);
+          })
+        );
       }
       if (locationId && variant.sku?.startsWith(prefix)) {
         const usSize = variant.sku.slice(prefix.length);
         if (inStock.has(usSize)) {
-          await setInventoryLevel(variant.inventory_item_id, locationId, 10).catch((error) => {
-            errors.push(`In-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
-          });
+          tasks.push(
+            setInventoryLevel(variant.inventory_item_id, locationId, 10).catch((error) => {
+              errors.push(`In-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
+            })
+          );
         } else if (outOfStock.has(usSize)) {
-          await setInventoryLevel(variant.inventory_item_id, locationId, 0).catch((error) => {
-            errors.push(`Out-of-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
-          });
+          tasks.push(
+            setInventoryLevel(variant.inventory_item_id, locationId, 0).catch((error) => {
+              errors.push(`Out-of-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
+            })
+          );
         }
       }
-    }
+      await Promise.all(tasks);
+    }));
 
     if (errors.length) {
       throw new Error(errors.join(" | "));
@@ -481,8 +515,18 @@ export async function importMonitorProduct(monitor) {
   const allSizesUS = [...inStock, ...outOfStock];
 
   const baseSku = pd.sku || "";
+  if (monitor.shopifyProductId) {
+    throw new Error(`Already imported to Shopify for SKU ${baseSku || pd.name || monitor.name}`);
+  }
   if (baseSku) {
-    const existing = await findProductBySkuPrefix(baseSku);
+    const mapping = await getSkuMapping();
+    let existing = null;
+    if (mapping[baseSku]) {
+      existing = await getProductById(mapping[baseSku]).catch(() => null);
+    }
+    if (!existing) {
+      existing = await findProductBySkuPrefix(baseSku);
+    }
     if (existing?.id) {
       throw new Error(`Already imported to Shopify for SKU ${baseSku}`);
     }
@@ -557,7 +601,7 @@ export async function importMonitorProduct(monitor) {
   // Set inventory at primary location
   const locations = await getLocations();
   if (locations.length && created.variants) {
-    for (const variant of created.variants) {
+    await Promise.all(created.variants.map(async (variant) => {
       const usSize = allSizesUS.find(us => {
         const eu = getEuSize(us, brand, gender);
         return eu ? String(eu) === variant.option1 : us === variant.option1;
@@ -565,10 +609,10 @@ export async function importMonitorProduct(monitor) {
       const qty = usSize
         ? (inStock.has(usSize) ? 10 : 0)
         : (variant.inventory_quantity ?? 10);
-      for (const location of locations) {
-        await setInventoryLevel(variant.inventory_item_id, location.id, qty).catch(() => {});
-      }
-    }
+      await Promise.all(locations.map((location) =>
+        setInventoryLevel(variant.inventory_item_id, location.id, qty).catch(() => {})
+      ));
+    }));
   }
 
   // Save to import history for undo
