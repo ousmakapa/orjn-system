@@ -481,6 +481,12 @@ export async function importMonitorProduct(monitor) {
   const allSizesUS = [...inStock, ...outOfStock];
 
   const baseSku = pd.sku || "";
+  if (baseSku) {
+    const existing = await findProductBySkuPrefix(baseSku);
+    if (existing?.id) {
+      throw new Error(`Already imported to Shopify for SKU ${baseSku}`);
+    }
+  }
   const brand = matchExisting(pd.brand || "", meta.vendors);
   const gender = pd.gender || "";
   const productType = matchExisting(pd.type || "", meta.types);
@@ -524,7 +530,8 @@ export async function importMonitorProduct(monitor) {
     vendor: brand,
     product_type: productType,
     tags: tags.join(", "),
-    status: "draft",
+    status: "active",
+    published_scope: "global",
     options: allSizesUS.length ? [{ name: "Size" }] : [],
     variants,
     images: (pd.images || []).map(src => ({ src })),
@@ -549,10 +556,8 @@ export async function importMonitorProduct(monitor) {
 
   // Set inventory at primary location
   const locations = await getLocations();
-  const locationId = locations[0]?.id;
-  if (locationId && created.variants) {
+  if (locations.length && created.variants) {
     for (const variant of created.variants) {
-      // Map EU option1 back to US size to find correct stock status
       const usSize = allSizesUS.find(us => {
         const eu = getEuSize(us, brand, gender);
         return eu ? String(eu) === variant.option1 : us === variant.option1;
@@ -560,7 +565,9 @@ export async function importMonitorProduct(monitor) {
       const qty = usSize
         ? (inStock.has(usSize) ? 10 : 0)
         : (variant.inventory_quantity ?? 10);
-      await setInventoryLevel(variant.inventory_item_id, locationId, qty).catch(() => {});
+      for (const location of locations) {
+        await setInventoryLevel(variant.inventory_item_id, location.id, qty).catch(() => {});
+      }
     }
   }
 

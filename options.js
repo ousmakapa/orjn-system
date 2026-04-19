@@ -232,16 +232,37 @@ function getIntervalDisplay(minutes) {
   return { value: m, unit: 1 };
 }
 
+function getMonitorThumb(monitor) {
+  const images = monitor.productData?.images;
+  return Array.isArray(images) && images.length ? images[0] : "";
+}
+
+function renderSquareLiveData(monitor) {
+  const d = monitor.lastExtractedData;
+  if (!d) return "";
+  const parts = [];
+  if (d.price != null) parts.push(`$${Math.round(Number(d.price))}`);
+  if (d.compareAt != null) parts.push(`compare $${Math.round(Number(d.compareAt))}`);
+  if (d.inStock?.length) parts.push(`in: ${(d.inStock || []).join(", ")}`);
+  if (d.outOfStock?.length) parts.push(`out: ${(d.outOfStock || []).join(", ")}`);
+  if (!parts.length) return "";
+  return `<p class="square-live" title="${escapeHtml(parts.join(" | "))}">${escapeHtml(parts.join(" | "))}</p>`;
+}
+
 function renderSquare(monitor) {
   const isActive = selectedMonitorId === monitor.id;
   const isChecked = checkedIds.has(monitor.id);
   const num = allMonitors.findIndex((m) => m.id === monitor.id) + 1;
+  const thumb = getMonitorThumb(monitor);
+  const importedBadge = monitor.shopifyProductId ? `<span class="square-imported">Shopify</span>` : "";
 
   return `
     <article class="monitor-square${isActive ? " active" : ""}" data-id="${monitor.id}">
       <span class="monitor-num">#${num}</span>
       <input type="checkbox" class="square-check" data-id="${monitor.id}"${isChecked ? " checked" : ""} title="Select for bulk check">
       <div class="status-dot ${escapeHtml(monitor.status || "idle")}"></div>
+      ${importedBadge}
+      ${thumb ? `<div class="square-thumb-wrap"><img class="square-thumb" src="${escapeHtml(thumb)}" alt="${escapeHtml(monitor.productData?.name || monitor.name || "Product image")}"></div>` : ""}
       ${(() => {
         const pd = monitor.productData;
         const brand = pd?.brand || "";
@@ -251,6 +272,7 @@ function renderSquare(monitor) {
         return `<p class="square-name" title="${escapeHtml(cardTitle)}">${escapeHtml(cardTitle)}</p>
       ${productName ? `<p class="square-domain" title="${escapeHtml(productName)}" style="white-space:normal;line-height:1.3;font-size:10px">${escapeHtml(productName)}</p>` : `<p class="square-domain" title="${escapeHtml(getDomain(monitor.url))}">${escapeHtml(getDomain(monitor.url))}</p>`}`;
       })()}
+      ${renderSquareLiveData(monitor)}
       <div class="square-meta">
         ${monitor.changeCount > 0 ? `<span class="square-changes">${monitor.changeCount}</span>` : ""}
         <span class="square-time">${escapeHtml(timeAgo(monitor.lastCheckedAt))}</span>
@@ -618,7 +640,7 @@ function renderGrid(monitors) {
     </div>`;
   }
 
-  const newMons = monitors.filter((m) => m.createdAt && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
+  const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
   const errorMons = monitors.filter((m) => m.status === "error");
 
   const newSection = newMons.length
@@ -733,7 +755,7 @@ monitorGrid.addEventListener("click", (event) => {
       const NOW = Date.now();
       const HOURS_48 = 48 * 60 * 60 * 1000;
       const groupMonitors = groupKey === "__new48h__"
-        ? visible.filter((m) => m.createdAt && (NOW - new Date(m.createdAt).getTime()) < HOURS_48)
+        ? visible.filter((m) => m.createdAt && !m.shopifyProductId && (NOW - new Date(m.createdAt).getTime()) < HOURS_48)
         : groupKey === "__errors__"
           ? visible.filter((m) => m.status === "error")
           : visible.filter((m) => getDomain(m.url) === groupKey);
