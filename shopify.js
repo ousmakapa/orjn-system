@@ -2,6 +2,7 @@ const SHOP = "orjn.myshopify.com";
 const CLIENT_ID = "bf0dbb55084b776cfeab72d1a69a8436";
 const API_VERSION = "2025-01";
 const IMPORT_HISTORY_KEY = "shopifyImportHistory";
+const SHOPIFY_SECRET_ENV_KEY = "SHOPIFY_CLIENT_SECRET";
 
 // ── Color normalization ────────────────────────────────────────────────────
 const COLOR_MAP = {
@@ -77,6 +78,38 @@ function getRedirectUri() {
   return `https://${chrome.runtime.id}.chromiumapp.org/`;
 }
 
+function parseEnvValue(rawValue) {
+  const value = rawValue.trim();
+  if (!value) return "";
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+async function getClientSecretFromEnv() {
+  try {
+    const res = await fetch(chrome.runtime.getURL(".env"), { cache: "no-store" });
+    if (!res.ok) return null;
+    const envText = await res.text();
+    for (const rawLine of envText.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const separatorIndex = line.indexOf("=");
+      if (separatorIndex === -1) continue;
+      const key = line.slice(0, separatorIndex).trim();
+      if (key !== SHOPIFY_SECRET_ENV_KEY) continue;
+      return parseEnvValue(line.slice(separatorIndex + 1));
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
 export async function getAccessToken() {
   const { shopifyToken } = await chrome.storage.local.get("shopifyToken");
   return shopifyToken || null;
@@ -96,7 +129,8 @@ export async function verifyConnection() {
 }
 
 export async function connectShopify(clientSecret) {
-  if (!clientSecret) {
+  const resolvedClientSecret = clientSecret || (await getClientSecretFromEnv());
+  if (!resolvedClientSecret) {
     throw new Error("Shopify client secret is not configured");
   }
   const state = crypto.randomUUID();
@@ -117,17 +151,17 @@ export async function connectShopify(clientSecret) {
   const res = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: CLIENT_ID, client_secret: clientSecret, code })
+    body: JSON.stringify({ client_id: CLIENT_ID, client_secret: resolvedClientSecret, code })
   });
   if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
   const { access_token } = await res.json();
   if (!access_token) throw new Error("No access token in response");
-  await chrome.storage.local.set({ shopifyToken: access_token, shopifyClientSecret: clientSecret });
+  await chrome.storage.local.set({ shopifyToken: access_token });
   return access_token;
 }
 
 export async function disconnectShopify() {
-  await chrome.storage.local.remove(["shopifyToken", "shopifyClientSecret"]);
+  await chrome.storage.local.remove(["shopifyToken"]);
 }
 
 async function shopifyFetch(path, options = {}) {
