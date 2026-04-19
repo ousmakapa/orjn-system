@@ -15,7 +15,11 @@ A Chrome-compatible extension that watches full pages or specific elements for c
 
 1. Open Chrome and go to `chrome://extensions`.
 2. Turn on **Developer mode**.
-3. Copy `.env.example` to `.env` and set `SHOPIFY_CLIENT_SECRET` to your real Shopify app shared secret.
+3. Create a `.env` file in the project root with:
+   `SHOPIFY_SHOP`
+   `SHOPIFY_CLIENT_ID`
+   `SHOPIFY_CLIENT_SECRET`
+   `SHOPIFY_API_VERSION`
 4. Click **Load unpacked**.
 5. Select this folder.
 
@@ -34,4 +38,4 @@ A Chrome-compatible extension that watches full pages or specific elements for c
 - The current implementation tracks text content changes.
 - Scheduled checks use the Chrome alarms API, so the practical minimum interval is one minute.
 - Some sites render data dynamically after initial HTML load. Those pages may need a richer capture approach than this first version.
-- The Shopify shared secret is loaded locally from `.env` and is intentionally ignored by Git.
+- Shopify configuration is loaded locally from `.env` and is intentionally ignored by Git.

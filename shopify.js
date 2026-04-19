@@ -1,8 +1,16 @@
-const SHOP = "orjn.myshopify.com";
-const CLIENT_ID = "bf0dbb55084b776cfeab72d1a69a8436";
-const API_VERSION = "2025-01";
 const IMPORT_HISTORY_KEY = "shopifyImportHistory";
-const SHOPIFY_SECRET_ENV_KEY = "SHOPIFY_CLIENT_SECRET";
+const SHOPIFY_ENV_KEYS = {
+  shop: "SHOPIFY_SHOP",
+  clientId: "SHOPIFY_CLIENT_ID",
+  clientSecret: "SHOPIFY_CLIENT_SECRET",
+  apiVersion: "SHOPIFY_API_VERSION"
+};
+const SHOPIFY_DEFAULTS = {
+  shop: "orjn.myshopify.com",
+  clientId: "bf0dbb55084b776cfeab72d1a69a8436",
+  apiVersion: "2025-01"
+};
+let envConfigPromise = null;
 
 // ── Color normalization ────────────────────────────────────────────────────
 const COLOR_MAP = {
@@ -90,24 +98,38 @@ function parseEnvValue(rawValue) {
   return value;
 }
 
-async function getClientSecretFromEnv() {
-  try {
-    const res = await fetch(chrome.runtime.getURL(".env"), { cache: "no-store" });
-    if (!res.ok) return null;
-    const envText = await res.text();
-    for (const rawLine of envText.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith("#")) continue;
-      const separatorIndex = line.indexOf("=");
-      if (separatorIndex === -1) continue;
-      const key = line.slice(0, separatorIndex).trim();
-      if (key !== SHOPIFY_SECRET_ENV_KEY) continue;
-      return parseEnvValue(line.slice(separatorIndex + 1));
+async function getEnvConfig() {
+  if (envConfigPromise) return envConfigPromise;
+  envConfigPromise = (async () => {
+    const config = {};
+    try {
+      const res = await fetch(chrome.runtime.getURL(".env"), { cache: "no-store" });
+      if (!res.ok) return config;
+      const envText = await res.text();
+      for (const rawLine of envText.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const separatorIndex = line.indexOf("=");
+        if (separatorIndex === -1) continue;
+        const key = line.slice(0, separatorIndex).trim();
+        config[key] = parseEnvValue(line.slice(separatorIndex + 1));
+      }
+    } catch (_) {
+      return config;
     }
-  } catch (_) {
-    return null;
-  }
-  return null;
+    return config;
+  })();
+  return envConfigPromise;
+}
+
+async function getShopifyConfig() {
+  const env = await getEnvConfig();
+  return {
+    shop: env[SHOPIFY_ENV_KEYS.shop] || SHOPIFY_DEFAULTS.shop,
+    clientId: env[SHOPIFY_ENV_KEYS.clientId] || SHOPIFY_DEFAULTS.clientId,
+    clientSecret: env[SHOPIFY_ENV_KEYS.clientSecret] || "",
+    apiVersion: env[SHOPIFY_ENV_KEYS.apiVersion] || SHOPIFY_DEFAULTS.apiVersion
+  };
 }
 
 export async function getAccessToken() {
@@ -129,15 +151,16 @@ export async function verifyConnection() {
 }
 
 export async function connectShopify(clientSecret) {
-  const resolvedClientSecret = clientSecret || (await getClientSecretFromEnv());
+  const { shop, clientId, clientSecret: envClientSecret } = await getShopifyConfig();
+  const resolvedClientSecret = clientSecret || envClientSecret;
   if (!resolvedClientSecret) {
     throw new Error("Shopify client secret is not configured");
   }
   const state = crypto.randomUUID();
   const redirectUri = getRedirectUri();
   const authUrl =
-    `https://${SHOP}/admin/oauth/authorize` +
-    `?client_id=${CLIENT_ID}` +
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${clientId}` +
     `&scope=write_products,write_inventory,read_products,read_inventory` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&state=${state}`;
@@ -148,10 +171,10 @@ export async function connectShopify(clientSecret) {
   const code = params.get("code");
   if (!code) throw new Error("No auth code returned");
 
-  const res = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
+  const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_id: CLIENT_ID, client_secret: resolvedClientSecret, code })
+    body: JSON.stringify({ client_id: clientId, client_secret: resolvedClientSecret, code })
   });
   if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
   const { access_token } = await res.json();
@@ -167,7 +190,8 @@ export async function disconnectShopify() {
 async function shopifyFetch(path, options = {}) {
   const token = await getAccessToken();
   if (!token) throw new Error("Not connected to Shopify");
-  const res = await fetch(`https://${SHOP}/admin/api/${API_VERSION}${path}`, {
+  const { shop, apiVersion } = await getShopifyConfig();
+  const res = await fetch(`https://${shop}/admin/api/${apiVersion}${path}`, {
     ...options,
     headers: {
       "X-Shopify-Access-Token": token,
@@ -198,7 +222,8 @@ export async function createProduct(product) {
 export async function deleteProduct(productId) {
   const token = await getAccessToken();
   if (!token) throw new Error("Not connected to Shopify");
-  await fetch(`https://${SHOP}/admin/api/${API_VERSION}/products/${productId}.json`, {
+  const { shop, apiVersion } = await getShopifyConfig();
+  await fetch(`https://${shop}/admin/api/${apiVersion}/products/${productId}.json`, {
     method: "DELETE",
     headers: { "X-Shopify-Access-Token": token }
   });
@@ -217,7 +242,8 @@ export async function getShopifyMetadata() {
     const url = pageInfo
       ? `/products.json?limit=250&fields=vendor,product_type,tags&page_info=${pageInfo}`
       : `/products.json?limit=250&fields=vendor,product_type,tags`;
-    const res = await fetch(`https://${SHOP}/admin/api/${API_VERSION}${url}`, {
+    const { shop, apiVersion } = await getShopifyConfig();
+    const res = await fetch(`https://${shop}/admin/api/${apiVersion}${url}`, {
       headers: { "X-Shopify-Access-Token": await getAccessToken(), "Content-Type": "application/json" }
     });
     const link = res.headers.get("Link") || "";
@@ -265,7 +291,8 @@ async function findProductBySkuPrefix(baseSku) {
     const path = pageInfo
       ? `/products.json?limit=250&fields=id,variants&page_info=${pageInfo}`
       : `/products.json?limit=250&fields=id,variants`;
-    const res = await fetch(`https://${SHOP}/admin/api/${API_VERSION}${path}`, {
+    const { shop, apiVersion } = await getShopifyConfig();
+    const res = await fetch(`https://${shop}/admin/api/${apiVersion}${path}`, {
       headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" }
     });
     const link = res.headers.get("Link") || "";
