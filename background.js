@@ -981,6 +981,12 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
             next.productData = { ...monitor.productDataOverrides };
           }
         }
+
+        if (snapshot.liveData) {
+          chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
+            if (!shopifyTestMode) updateShopifyForMonitor(next, snapshot.liveData).catch(() => {});
+          });
+        }
       } else {
         const htmlChanged = snapshot.html !== monitor.lastHtmlSnapshot;
         const prevLive = monitor.lastExtractedData;
@@ -1002,11 +1008,7 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
           const currentText = snapshot.summary;
           const htmlDiff = buildHtmlDiff(previousHtml, currentHtml);
 
-          // Auto-update Shopify when live data changed (skip in test mode)
           if (liveChanges.length && newLive) {
-            chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
-              if (!shopifyTestMode) updateShopifyForMonitor(monitor, newLive).catch(() => {});
-            });
             const pd = monitor.productData || {};
             const brand = pd.brand || "";
             const sku = pd.sku || "";
@@ -1053,6 +1055,12 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
             iconUrl: chrome.runtime.getURL("icon.svg"),
             title: `Change detected: ${monitor.name}`,
             message: notifMsg
+          });
+        }
+
+        if (newLive) {
+          chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
+            if (!shopifyTestMode) updateShopifyForMonitor(next, newLive).catch(() => {});
           });
         }
       }

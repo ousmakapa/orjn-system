@@ -292,6 +292,18 @@ async function getProductById(productId) {
   return data.product || null;
 }
 
+async function getInventoryLevels(inventoryItemIds, locationIds) {
+  const itemIds = [...new Set((inventoryItemIds || []).filter(Boolean))];
+  const locIds = [...new Set((locationIds || []).filter(Boolean))];
+  if (!itemIds.length || !locIds.length) return [];
+  const params = new URLSearchParams({
+    inventory_item_ids: itemIds.join(","),
+    location_ids: locIds.join(",")
+  });
+  const data = await shopifyFetch(`/inventory_levels.json?${params.toString()}`);
+  return data.inventory_levels || [];
+}
+
 // Fetches all existing vendors, product_types, and tags from the store
 export async function getShopifyMetadata() {
   if (isFreshCacheEntry(metadataCache)) return metadataCache.value;
@@ -407,13 +419,25 @@ export async function updateShopifyForMonitor(monitor, liveData) {
     const inStock = new Set(liveData.inStock || []);
     const outOfStock = new Set(liveData.outOfStock || []);
     const locations = await getLocations();
-    const locationId = locations[0]?.id;
+    const locationIds = locations.map((location) => location.id).filter(Boolean);
     const prefix = `${baseSku}-`;
     const errors = [];
+    const inventoryLevels = await getInventoryLevels(
+      product.variants.map((variant) => variant.inventory_item_id),
+      locationIds
+    ).catch(() => []);
+    const inventoryLevelMap = new Map(
+      inventoryLevels.map((level) => [`${level.inventory_item_id}:${level.location_id}`, Number(level.available ?? 0)])
+    );
 
     await Promise.all(product.variants.map(async (variant) => {
       const tasks = [];
-      if (price !== null) {
+      const currentPrice = variant.price != null ? String(variant.price) : null;
+      const currentCompareAt = variant.compare_at_price != null ? String(variant.compare_at_price) : null;
+      const needsPriceUpdate =
+        price !== null &&
+        (currentPrice !== price || (hasCompareAt && currentCompareAt !== compareAt));
+      if (needsPriceUpdate) {
         const update = { id: variant.id, price };
         if (hasCompareAt) update.compare_at_price = compareAt;
         tasks.push(
@@ -425,20 +449,20 @@ export async function updateShopifyForMonitor(monitor, liveData) {
           })
         );
       }
-      if (locationId && variant.sku?.startsWith(prefix)) {
+      if (locationIds.length && variant.sku?.startsWith(prefix)) {
         const usSize = variant.sku.slice(prefix.length);
-        if (inStock.has(usSize)) {
-          tasks.push(
-            setInventoryLevel(variant.inventory_item_id, locationId, 10).catch((error) => {
-              errors.push(`In-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
-            })
-          );
-        } else if (outOfStock.has(usSize)) {
-          tasks.push(
-            setInventoryLevel(variant.inventory_item_id, locationId, 0).catch((error) => {
-              errors.push(`Out-of-stock sync failed for ${usSize}: ${formatShopifyError(error)}`);
-            })
-          );
+        const desiredQty = inStock.has(usSize) ? 10 : (outOfStock.has(usSize) ? 0 : null);
+        if (desiredQty !== null) {
+          for (const locationId of locationIds) {
+            const currentQty = inventoryLevelMap.get(`${variant.inventory_item_id}:${locationId}`);
+            if (currentQty === desiredQty) continue;
+            tasks.push(
+              setInventoryLevel(variant.inventory_item_id, locationId, desiredQty).catch((error) => {
+                const label = desiredQty > 0 ? "In-stock" : "Out-of-stock";
+                errors.push(`${label} sync failed for ${usSize} at location ${locationId}: ${formatShopifyError(error)}`);
+              })
+            );
+          }
         }
       }
       await Promise.all(tasks);
