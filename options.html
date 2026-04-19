@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Monitor Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Jost:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body class="dashboard-body">
+    <main class="dashboard-shell">
+
+      <section class="dashboard-header">
+
+        <!-- ROW 1: Brand + Shopify status + Meta controls -->
+        <div class="header-row header-row--top">
+          <h1>Monitors</h1>
+          <div class="header-shopify">
+            <div id="shopify-status" class="shopify-status-text">Checking…</div>
+            <button id="shopify-connect-btn" class="secondary" style="display:none">Connect Shopify</button>
+            <button id="shopify-disconnect-btn" class="inline-button danger" style="display:none">Disconnect</button>
+            <p id="shopify-error" style="display:none;margin:0;font-size:12px;color:var(--infrared)"></p>
+          </div>
+          <div class="header-flex-gap"></div>
+          <div class="header-group">
+            <label class="toggle" id="auto-interval-label" title="When on, monitors check automatically at their set interval">
+              <input id="auto-interval-toggle" type="checkbox">
+              <span>Auto</span>
+            </label>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-group">
+            <label class="toggle" id="test-mode-label" title="Enable to run checks without Shopify. Turn off to revert all changes made during test.">
+              <input id="test-mode-toggle" type="checkbox">
+              <span>Test mode</span>
+            </label>
+            <button id="stop-checks" class="secondary danger" style="display:none">Stop checks</button>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-group">
+            <button id="open-logs-btn" class="ghost">Logs</button>
+            <button id="refresh-dashboard" class="ghost">Refresh</button>
+          </div>
+        </div>
+
+        <!-- ROW 2: Search + Selection + Actions -->
+        <div class="header-row header-row--actions">
+          <div class="header-group">
+            <input id="dashboard-search" type="search" placeholder="Search monitors">
+            <label class="toggle">
+              <input id="changed-only" type="checkbox">
+              <span>Changed only</span>
+            </label>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-group">
+            <button id="select-all" class="inline-button">Select all</button>
+            <button id="deselect-all" class="inline-button">Deselect</button>
+            <input id="range-from" type="number" min="1" class="range-input" placeholder="#">
+            <span style="color:var(--muted);font-size:12px">–</span>
+            <input id="range-to" type="number" min="1" class="range-input" placeholder="#">
+            <button id="select-range" class="inline-button">Range</button>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-group">
+            <button id="check-all" class="secondary" disabled>Check all</button>
+            <button id="bulk-check" class="secondary" disabled>Check selected</button>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-group">
+            <button id="bulk-import" class="import-btn" disabled>Import to Shopify</button>
+            <button id="undo-import" class="inline-button" style="display:none">Undo Import</button>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-group">
+            <button id="undo-last" class="inline-button" disabled>Undo (0)</button>
+            <button id="bulk-delete" class="inline-button danger" disabled>Delete selected</button>
+          </div>
+        </div>
+
+        <!-- ROW 3: Intervals -->
+        <div class="header-row header-row--intervals">
+          <div id="bulk-interval-row" class="header-group" style="display:none">
+            <span class="hdr-label">Selected interval:</span>
+            <input id="bulk-interval-value" type="number" min="1" value="1" class="range-input">
+            <select id="bulk-interval-unit">
+              <option value="1">min</option>
+              <option value="60">hours</option>
+              <option value="1440" selected>days</option>
+            </select>
+            <button id="apply-interval-selected" class="inline-button">Apply to selected</button>
+            <div class="hdr-sep"></div>
+          </div>
+          <div class="header-group">
+            <span class="hdr-label">All intervals:</span>
+            <input id="global-interval-value" type="number" min="1" value="1" class="range-input">
+            <select id="global-interval-unit">
+              <option value="1">min</option>
+              <option value="60">hours</option>
+              <option value="1440" selected>days</option>
+            </select>
+            <button id="apply-interval-all" class="inline-button">Apply to all</button>
+          </div>
+        </div>
+
+      </section>
+
+      <section id="dashboard-stats" class="stats-grid"></section>
+
+      <div class="filter-bar">
+        <select id="filter-brand" class="filter-select">
+          <option value="">All brands</option>
+        </select>
+        <select id="filter-type" class="filter-select">
+          <option value="">All types</option>
+        </select>
+        <select id="filter-sort" class="filter-select">
+          <option value="created-desc">Last created</option>
+          <option value="created-asc">First created</option>
+          <option value="changed-desc">Last changed</option>
+          <option value="checked-desc">Last checked</option>
+        </select>
+      </div>
+
+      <section id="logs-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Activity Log</span>
+          <div style="display:flex;gap:6px">
+            <button id="logs-refresh-btn" class="ghost" style="font-size:11px;padding:4px 10px">Refresh</button>
+            <button id="logs-clear-btn" class="inline-button danger" style="font-size:11px;padding:4px 10px">Clear</button>
+            <button id="close-logs-btn" class="ghost" style="font-size:11px;padding:4px 10px">✕ Close</button>
+          </div>
+        </div>
+        <div id="logs-list" style="max-height:360px;overflow-y:auto"></div>
+      </section>
+
+      <section id="monitor-grid" class="monitor-grid"></section>
+      <section id="monitor-detail" class="monitor-detail" style="display:none"></section>
+
+    </main>
+
+    <section id="shopify-meta-section" style="margin-top:0;padding:20px 24px;background:var(--vault);border-top:1px solid var(--border);display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        <h2 style="font-size:13px;font-weight:800;margin:0;text-transform:uppercase;letter-spacing:0.1em">Store Data</h2>
+        <button id="fetch-meta-btn" class="secondary" style="font-size:11px;padding:5px 12px">Refresh</button>
+        <span id="fetch-meta-status" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div id="shopify-meta-content" style="display:flex;flex-direction:column;gap:16px"></div>
+    </section>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

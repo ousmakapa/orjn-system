@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Distill-Style Monitor",
+  "version": "0.1.0",
+  "description": "Monitor full pages or specific elements for changes and get browser notifications.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "tabs",
+    "scripting",
+    "identity"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "128": "icon.svg"
+  },
+  "action": {
+    "default_title": "Distill-Style Monitor",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

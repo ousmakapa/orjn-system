@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Page Monitor</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        width: 420px;
+        font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+        color: #17202a;
+        background: #f4efe8;
+      }
+
+      .popup-wrap {
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      /* ── Header ── */
+      .popup-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .popup-header img {
+        width: 38px;
+        height: 38px;
+        flex-shrink: 0;
+      }
+
+      .popup-header h1 {
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .popup-header p {
+        font-size: 12px;
+        color: #5f6c7b;
+        margin-top: 2px;
+      }
+
+      /* ── Action buttons ── */
+      .popup-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+
+      .action-btn {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        width: 100%;
+        padding: 13px 15px;
+        border-radius: 13px;
+        border: 1.5px solid rgba(23,32,42,0.13);
+        background: #fff;
+        cursor: pointer;
+        text-align: left;
+        transition: box-shadow 0.15s, border-color 0.15s, background 0.15s;
+        font: inherit;
+        color: #17202a;
+      }
+
+      .action-btn:hover {
+        border-color: #ff5a36;
+        box-shadow: 0 4px 14px rgba(255,90,54,0.14);
+      }
+
+      .action-btn.primary-btn {
+        background: #ff5a36;
+        border-color: #ff5a36;
+        color: #fff;
+      }
+
+      .action-btn.primary-btn:hover {
+        background: #d63f1d;
+        border-color: #d63f1d;
+      }
+
+      .btn-icon {
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.22);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 17px;
+      }
+
+      .primary-btn .btn-icon {
+        background: rgba(255,255,255,0.22);
+      }
+
+      .action-btn:not(.primary-btn) .btn-icon {
+        background: rgba(23,32,42,0.07);
+      }
+
+      .btn-text strong {
+        display: block;
+        font-size: 13.5px;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+
+      .btn-text span {
+        font-size: 11.5px;
+        opacity: 0.65;
+        margin-top: 2px;
+        display: block;
+      }
+
+      /* ── Footer link ── */
+      .popup-footer {
+        text-align: center;
+      }
+
+      .dashboard-link {
+        background: none;
+        border: none;
+        font: inherit;
+        font-size: 12.5px;
+        color: #5f6c7b;
+        cursor: pointer;
+        padding: 6px 12px;
+        border-radius: 8px;
+        transition: background 0.12s, color 0.12s;
+        width: 100%;
+      }
+
+      .dashboard-link:hover {
+        background: rgba(23,32,42,0.07);
+        color: #17202a;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="popup-wrap">
+
+      <div class="popup-header">
+        <img src="icon.svg" alt="">
+        <div>
+          <h1>Page Monitor</h1>
+          <p>Watch pages and elements for changes.</p>
+        </div>
+      </div>
+
+      <div class="popup-actions">
+        <button id="pick-element" class="action-btn primary-btn">
+          <div class="btn-icon">&#9654;</div>
+          <div class="btn-text">
+            <strong>Pick element on this tab</strong>
+            <span>Click to select a specific element</span>
+          </div>
+        </button>
+
+        <button id="monitor-page" class="action-btn">
+          <div class="btn-icon">&#9633;</div>
+          <div class="btn-text">
+            <strong>Monitor full page</strong>
+            <span>Watch the entire page for changes</span>
+          </div>
+        </button>
+
+        <button id="monitor-several" class="action-btn">
+          <div class="btn-icon">&#128144;</div>
+          <div class="btn-text">
+            <strong>Monitor several shoes</strong>
+            <span>Select multiple products from a listing</span>
+          </div>
+        </button>
+      </div>
+
+      <div class="popup-footer">
+        <button id="open-dashboard" class="dashboard-link">Open dashboard &rarr;</button>
+      </div>
+
+    </div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
