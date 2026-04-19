@@ -473,7 +473,7 @@ export async function importMonitorProduct(monitor) {
         namespace: "custom",
         key: "notes",
         value: monitor.url || "",
-        type: "single_line_text_field"
+        type: "multi_line_text_field"
       }
     ]
   };
