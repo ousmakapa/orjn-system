@@ -240,13 +240,19 @@ function getMonitorThumb(monitor) {
 function renderSquareLiveData(monitor) {
   const d = monitor.lastExtractedData;
   if (!d) return "";
-  const parts = [];
-  if (d.price != null) parts.push(`$${Math.round(Number(d.price))}`);
-  if (d.compareAt != null) parts.push(`compare $${Math.round(Number(d.compareAt))}`);
-  if (d.inStock?.length) parts.push(`in: ${(d.inStock || []).join(", ")}`);
-  if (d.outOfStock?.length) parts.push(`out: ${(d.outOfStock || []).join(", ")}`);
-  if (!parts.length) return "";
-  return `<p class="square-live" title="${escapeHtml(parts.join(" | "))}">${escapeHtml(parts.join(" | "))}</p>`;
+  const rows = [];
+  if (d.price != null) rows.push(`<span class="square-live-line">price: ${escapeHtml(`$${Math.round(Number(d.price))}`)}</span>`);
+  if (d.compareAt != null) rows.push(`<span class="square-live-line">compare: ${escapeHtml(`$${Math.round(Number(d.compareAt))}`)}</span>`);
+  if (d.inStock?.length) rows.push(`<span class="square-live-line">in: ${escapeHtml((d.inStock || []).join(", "))}</span>`);
+  if (d.outOfStock?.length) rows.push(`<span class="square-live-line">out: ${escapeHtml((d.outOfStock || []).join(", "))}</span>`);
+  if (!rows.length) return "";
+  const title = [
+    d.price != null ? `price: $${Math.round(Number(d.price))}` : "",
+    d.compareAt != null ? `compare: $${Math.round(Number(d.compareAt))}` : "",
+    d.inStock?.length ? `in: ${(d.inStock || []).join(", ")}` : "",
+    d.outOfStock?.length ? `out: ${(d.outOfStock || []).join(", ")}` : ""
+  ].filter(Boolean).join(" | ");
+  return `<div class="square-live" title="${escapeHtml(title)}">${rows.join("")}</div>`;
 }
 
 function renderSquare(monitor) {
@@ -644,7 +650,12 @@ function renderGrid(monitors) {
   const errorMons = monitors.filter((m) => m.status === "error");
 
   const newSection = newMons.length
-    ? buildGroup(NEW_GROUP_KEY, `<span class="site-group-title new-group-title">New · last 48h</span>`, newMons)
+    ? buildGroup(
+        NEW_GROUP_KEY,
+        `<span class="site-group-title new-group-title">New · last 48h</span>`,
+        newMons,
+        `<div class="site-group-actions"><button class="site-clear-btn inline-button danger" data-ids="${escapeHtml(newMons.map((m) => m.id).join(","))}">Clear</button></div>`
+      )
     : "";
 
   const errorSection = errorMons.length
@@ -792,6 +803,21 @@ monitorGrid.addEventListener("click", (event) => {
   if (target.classList.contains("site-check-btn")) {
     const ids = target.dataset.ids.split(",").filter(Boolean);
     runBulkCheck(ids);
+    return;
+  }
+
+  if (target.classList.contains("site-clear-btn")) {
+    const ids = target.dataset.ids.split(",").filter(Boolean);
+    if (!ids.length) return;
+    if (!window.confirm(`Clear ${ids.length} monitor${ids.length > 1 ? "s" : ""} from New · last 48h?`)) return;
+    chrome.runtime.sendMessage({ type: "delete-monitors-batch", monitorIds: ids }).then(async () => {
+      ids.forEach((id) => checkedIds.delete(id));
+      if (ids.includes(selectedMonitorId)) {
+        selectedMonitorId = null;
+        monitorDetail.style.display = "none";
+      }
+      await silentRefresh();
+    });
     return;
   }
 
