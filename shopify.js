@@ -99,34 +99,34 @@ function invalidateShopifyCaches({ locations = false, metadata = false, products
 // ── Color normalization ────────────────────────────────────────────────────
 const COLOR_MAP = {
   // Red
-  red:"Red",crimson:"Red",scarlet:"Red",ruby:"Red",burgundy:"Red",maroon:"Red",wine:"Red",cherry:"Red",tomato:"Red",garnet:"Red",carmine:"Red",vermillion:"Red",brick:"Red",blood:"Red",firebrick:"Red",cranberry:"Red",raspberry:"Red",strawberry:"Red",rose:"Red",cardinal:"Red",claret:"Red",mahogany:"Red",terra:"Red",cotta:"Red",sienna:"Red",auburn:"Red",
+  red:"Red",crimson:"Red",scarlet:"Red",ruby:"Red",burgundy:"Red",maroon:"Red",wine:"Red",cherry:"Red",tomato:"Red",garnet:"Red",carmine:"Red",vermillion:"Red",vermilion:"Red",brick:"Red",blood:"Red",firebrick:"Red",cranberry:"Red",raspberry:"Red",strawberry:"Red",rose:"Red",cardinal:"Red",claret:"Red",mahogany:"Red",terra:"Red",cotta:"Red",sienna:"Red",auburn:"Red",rubyred:"Red",oxblood:"Red",merlot:"Red",poppy:"Red",coralred:"Red",sunsetred:"Red",chili:"Red",rubywine:"Red",
   // Orange
-  orange:"Orange",amber:"Orange",tangerine:"Orange",apricot:"Orange",rust:"Orange",burnt:"Orange",copper:"Orange",cinnamon:"Orange",pumpkin:"Orange",papaya:"Orange",mango:"Orange",melon:"Orange",clay:"Orange",ginger:"Orange",tiger:"Orange",marigold:"Orange",saffron:"Orange",bronze:"Orange",
+  orange:"Orange",amber:"Orange",tangerine:"Orange",apricot:"Orange",rust:"Orange",burnt:"Orange",copper:"Orange",cinnamon:"Orange",pumpkin:"Orange",papaya:"Orange",mango:"Orange",melon:"Orange",clay:"Orange",ginger:"Orange",tiger:"Orange",marigold:"Orange",saffron:"Orange",bronze:"Orange",peach:"Orange",persimmon:"Orange",nectarine:"Orange",cantaloupe:"Orange",sunset:"Orange",burntorange:"Orange",terracotta:"Orange",carrot:"Orange",kumquat:"Orange",
   // Brown
-  brown:"Brown",tan:"Brown",beige:"Brown",camel:"Brown",mocha:"Brown",chocolate:"Brown",coffee:"Brown",sand:"Brown",taupe:"Brown",nude:"Brown",cream:"Brown",natural:"Brown",walnut:"Brown",hazel:"Brown",toffee:"Brown",espresso:"Brown",sepia:"Brown",umber:"Brown",fawn:"Brown",wheat:"Brown",oatmeal:"Brown",biscuit:"Brown",latte:"Brown",ecru:"Brown",buff:"Brown",driftwood:"Brown",chestnut:"Brown",cacao:"Brown",bark:"Brown",leather:"Brown",suede:"Brown",
+  brown:"Brown",tan:"Brown",beige:"Brown",camel:"Brown",mocha:"Brown",chocolate:"Brown",coffee:"Brown",sand:"Brown",taupe:"Brown",nude:"Brown",cream:"Brown",natural:"Brown",walnut:"Brown",hazel:"Brown",toffee:"Brown",espresso:"Brown",sepia:"Brown",umber:"Brown",fawn:"Brown",wheat:"Brown",oatmeal:"Brown",biscuit:"Brown",latte:"Brown",ecru:"Brown",buff:"Brown",driftwood:"Brown",chestnut:"Brown",cacao:"Brown",bark:"Brown",leather:"Brown",suede:"Brown",stone:"Brown",khaki:"Brown",caramel:"Brown",pecan:"Brown",almond:"Brown",acorn:"Brown",cocoa:"Brown",mink:"Brown",tobacco:"Brown",saddle:"Brown",oak:"Brown",hickory:"Brown",truffle:"Brown",earth:"Brown",mud:"Brown",dune:"Brown",bran:"Brown",
   // Yellow
-  yellow:"Yellow",gold:"Yellow",golden:"Yellow",mustard:"Yellow",lemon:"Yellow",lime:"Yellow",canary:"Yellow",butter:"Yellow",banana:"Yellow",flaxen:"Yellow",straw:"Yellow",blonde:"Yellow",champagne:"Yellow",vanilla:"Yellow",honey:"Yellow",sunflower:"Yellow",daffodil:"Yellow",citrine:"Yellow",topaz:"Yellow",citrus:"Yellow",
+  yellow:"Yellow",gold:"Yellow",golden:"Yellow",mustard:"Yellow",lemon:"Yellow",lime:"Yellow",canary:"Yellow",butter:"Yellow",banana:"Yellow",flaxen:"Yellow",straw:"Yellow",blonde:"Yellow",champagne:"Yellow",vanilla:"Yellow",honey:"Yellow",sunflower:"Yellow",daffodil:"Yellow",citrine:"Yellow",topaz:"Yellow",citrus:"Yellow",volt:"Yellow",maize:"Yellow",corn:"Yellow",ambergold:"Yellow",sandgold:"Yellow",sulphur:"Yellow",mustardseed:"Yellow",dijon:"Yellow","neonyellow":"Yellow","electricyellow":"Yellow",
   // Green
-  green:"Green",olive:"Green",sage:"Green",forest:"Green",army:"Green",hunter:"Green",jade:"Green",emerald:"Green",mint:"Green",fern:"Green",moss:"Green",pine:"Green",bottle:"Green",kelly:"Green",shamrock:"Green",chartreuse:"Green",avocado:"Green",pistachio:"Green",pear:"Green",leaf:"Green",basil:"Green",seaweed:"Green",jungle:"Green",cucumber:"Green",matcha:"Green",celadon:"Green",viridian:"Green",malachite:"Green",
+  green:"Green",olive:"Green",sage:"Green",forest:"Green",army:"Green",hunter:"Green",jade:"Green",emerald:"Green",mint:"Green",fern:"Green",moss:"Green",pine:"Green",bottle:"Green",kelly:"Green",shamrock:"Green",chartreuse:"Green",avocado:"Green",pistachio:"Green",pear:"Green",leaf:"Green",basil:"Green",seaweed:"Green",jungle:"Green",cucumber:"Green",matcha:"Green",celadon:"Green",viridian:"Green",malachite:"Green",voltgreen:"Green",neongreen:"Green",electricgreen:"Green",loden:"Green",spruce:"Green",evergreen:"Green",clover:"Green",pea:"Green",grassy:"Green",seaglass:"Green",seafoamgreen:"Green",
   // Turquoise
-  turquoise:"Turquoise",teal:"Turquoise",aqua:"Turquoise",cyan:"Turquoise",seafoam:"Turquoise",aquamarine:"Turquoise",caribbean:"Turquoise",lagoon:"Turquoise",cerulean:"Turquoise",peacock:"Turquoise",ocean:"Turquoise",pool:"Turquoise",
+  turquoise:"Turquoise",teal:"Turquoise",aqua:"Turquoise",cyan:"Turquoise",seafoam:"Turquoise",aquamarine:"Turquoise",caribbean:"Turquoise",lagoon:"Turquoise",cerulean:"Turquoise",peacock:"Turquoise",ocean:"Turquoise",pool:"Turquoise",mintblue:"Turquoise",tiffany:"Turquoise",robinsegg:"Turquoise",bluegreen:"Turquoise",turq:"Turquoise",
   // Blue
-  blue:"Blue",navy:"Blue",cobalt:"Blue",royal:"Blue",indigo:"Blue",denim:"Blue",sky:"Blue",powder:"Blue",midnight:"Blue",steel:"Blue",slate:"Blue",sapphire:"Blue",azure:"Blue",cornflower:"Blue",periwinkle:"Blue",iris:"Blue",ultramarine:"Blue",prussian:"Blue",admiral:"Blue",marine:"Blue",federal:"Blue",storm:"Blue",glacier:"Blue",arctic:"Blue",ice:"Blue",aegean:"Blue",
+  blue:"Blue",navy:"Blue",cobalt:"Blue",royal:"Blue",indigo:"Blue",denim:"Blue",sky:"Blue",powder:"Blue",midnight:"Blue",steel:"Blue",slate:"Blue",sapphire:"Blue",azure:"Blue",cornflower:"Blue",periwinkle:"Blue",iris:"Blue",ultramarine:"Blue",prussian:"Blue",admiral:"Blue",marine:"Blue",federal:"Blue",storm:"Blue",glacier:"Blue",arctic:"Blue",ice:"Blue",aegean:"Blue",thunder:"Blue","obsidian-blue":"Blue",turbo:"Blue",polar:"Blue",mistblue:"Blue",oceanblue:"Blue",deepblue:"Blue",lightblue:"Blue",darkblue:"Blue",hyperblue:"Blue",universityblue:"Blue",carolinablue:"Blue",
   // Violet
-  violet:"Violet",purple:"Violet",lavender:"Violet",lilac:"Violet",plum:"Violet",grape:"Violet",mauve:"Violet",amethyst:"Violet",orchid:"Violet",wisteria:"Violet",heather:"Violet",thistle:"Violet",periwinkle:"Violet",mulberry:"Violet",eggplant:"Violet",byzantium:"Violet",aubergine:"Violet",boysenberry:"Violet",
+  violet:"Violet",purple:"Violet",lavender:"Violet",lilac:"Violet",plum:"Violet",grape:"Violet",mauve:"Violet",amethyst:"Violet",orchid:"Violet",wisteria:"Violet",heather:"Violet",thistle:"Violet",periwinkle:"Violet",mulberry:"Violet",eggplant:"Violet",byzantium:"Violet",aubergine:"Violet",boysenberry:"Violet",violetdust:"Violet",deeppurple:"Violet",royalpurple:"Violet",
   // Pink
-  pink:"Pink",blush:"Pink",fuchsia:"Pink",magenta:"Pink",flamingo:"Pink",salmon:"Pink",bubblegum:"Pink",watermelon:"Pink",peony:"Pink",carnation:"Pink",petal:"Pink",flush:"Pink",rouge:"Pink",blossom:"Pink",pastel:"Pink",candy:"Pink",lollipop:"Pink",neon:"Pink",cerise:"Pink",hot:"Pink",dusty:"Pink",millennial:"Pink",
+  pink:"Pink",blush:"Pink",fuchsia:"Pink",magenta:"Pink",flamingo:"Pink",salmon:"Pink",bubblegum:"Pink",watermelon:"Pink",peony:"Pink",carnation:"Pink",petal:"Pink",flush:"Pink",rouge:"Pink",blossom:"Pink",pastel:"Pink",candy:"Pink",lollipop:"Pink",neon:"Pink",cerise:"Pink",hot:"Pink",dusty:"Pink",millennial:"Pink",rosepink:"Pink",powderpink:"Pink",softpink:"Pink",brightpink:"Pink",shockpink:"Pink",
   // White
-  white:"White",ivory:"White",snow:"White",pearl:"White",alabaster:"White",porcelain:"White",linen:"White",chalk:"White",bone:"White",eggshell:"White",antique:"White",milk:"White",cotton:"White",ghost:"White",frost:"White",
+  white:"White",ivory:"White",snow:"White",pearl:"White",alabaster:"White",porcelain:"White",linen:"White",chalk:"White",bone:"White",eggshell:"White",antique:"White",milk:"White",cotton:"White",ghost:"White",frost:"White",sail:"White",offwhite:"White","off-white":"White",whisper:"White",paper:"White",shell:"White",
   // Gray
-  gray:"Gray",grey:"Gray",silver:"Gray",charcoal:"Gray",ash:"Gray",smoke:"Gray",graphite:"Gray",pewter:"Gray",stone:"Gray",pebble:"Gray",cement:"Gray",concrete:"Gray",flint:"Gray",iron:"Gray",lead:"Gray",fossil:"Gray",heather:"Gray",marengo:"Gray",dove:"Gray",cloud:"Gray",
+  gray:"Gray",grey:"Gray",silver:"Gray",charcoal:"Gray",ash:"Gray",smoke:"Gray",graphite:"Gray",pewter:"Gray",pebble:"Gray",cement:"Gray",concrete:"Gray",flint:"Gray",iron:"Gray",lead:"Gray",fossil:"Gray",heather:"Gray",marengo:"Gray",dove:"Gray",cloud:"Gray",wolf:"Gray",cool:"Gray",smokey:"Gray",stonegrey:"Gray","stone-gray":"Gray",coolgrey:"Gray","cool-grey":"Gray",neutralgray:"Gray",neutralgrey:"Gray",platinum:"Gray",gunmetal:"Gray",
   // Black
-  black:"Black",onyx:"Black",jet:"Black",ebony:"Black",obsidian:"Black",raven:"Black",midnight:"Black",coal:"Black",charcoal:"Black",licorice:"Black",noir:"Black",shadow:"Black",ink:"Black",pitch:"Black",
+  black:"Black",onyx:"Black",jet:"Black",ebony:"Black",obsidian:"Black",raven:"Black",midnight:"Black",coal:"Black",charcoal:"Black",licorice:"Black",noir:"Black",shadow:"Black",ink:"Black",pitch:"Black",tripleblack:"Black","triple-black":"Black",coreblack:"Black","core-black":"Black",phantom:"Black",anthracite:"Black",soot:"Black",carbon:"Black",
 };
 
 function normalizeColor(raw) {
-  if (!raw) return null;
-  const words = raw.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/);
+  if (!raw) return "Multicolor";
+  const words = raw.toLowerCase().replace(/[^a-z\s-]/g, " ").split(/\s+/).filter(Boolean);
   for (const word of words) {
     if (COLOR_MAP[word]) return COLOR_MAP[word];
   }
@@ -136,7 +136,7 @@ function normalizeColor(raw) {
       if (word.includes(key) || key.includes(word)) return val;
     }
   }
-  return null;
+  return "Multicolor";
 }
 
 // ── EU size charts ─────────────────────────────────────────────────────────
@@ -695,8 +695,7 @@ export async function importMonitorProduct(monitor) {
   const genderDisplay = pd.genderDisplay || gender;
   const sizeGender = pd.extractedGender || (gender !== "Not defined" ? gender : "") || "";
   const productType = matchExisting(pd.type || "", meta.types);
-  const extractedColor = String(pd.color || "").trim();
-  const normalizedColor = normalizeColor(extractedColor) || null;
+  const normalizedColor = normalizeColor(pd.color);
 
   // Always keep the extracted color as a Shopify tag.
   // If a normalized color also exists, include it too unless it's the same tag ignoring case.
@@ -704,7 +703,7 @@ export async function importMonitorProduct(monitor) {
     genderDisplay === "Both"
       ? ["Men", "Women"]
       : (genderDisplay && genderDisplay !== "Not defined" ? [genderDisplay] : []);
-  const rawTags = [...genderTags, extractedColor, normalizedColor]
+  const rawTags = [...genderTags, normalizedColor]
     .filter(Boolean)
     .filter((tag, index, arr) =>
       arr.findIndex((value) => String(value).toLowerCase() === String(tag).toLowerCase()) === index

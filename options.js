@@ -664,7 +664,7 @@ function renderGrid(monitors) {
     </div>`;
   }
 
-  const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
+  const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
   const errorMons = monitors.filter((m) => m.status === "error");
   const selectedNewMons = newMons.filter((m) => checkedIds.has(m.id));
 
@@ -810,7 +810,7 @@ monitorGrid.addEventListener("click", async (event) => {
       const NOW = Date.now();
       const HOURS_48 = 48 * 60 * 60 * 1000;
       const groupMonitors = groupKey === "__new48h__"
-        ? visible.filter((m) => m.createdAt && !m.shopifyProductId && (NOW - new Date(m.createdAt).getTime()) < HOURS_48)
+        ? visible.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48)
         : groupKey === "__errors__"
           ? visible.filter((m) => m.status === "error")
           : visible.filter((m) => getDomain(m.url) === groupKey);
@@ -855,12 +855,8 @@ monitorGrid.addEventListener("click", async (event) => {
     if (!ids.length) return;
     if (!window.confirm(`Clear ${ids.length} selected monitor${ids.length > 1 ? "s" : ""} from New · last 48h?`)) return;
     await runButtonProgress(target, ids, "Clearing", async (id) => {
-      await chrome.runtime.sendMessage({ type: "delete-monitor", monitorId: id });
+      await chrome.runtime.sendMessage({ type: "update-monitor", payload: { id, hiddenFromNew48h: true } });
       checkedIds.delete(id);
-      if (id === selectedMonitorId) {
-        selectedMonitorId = null;
-        monitorDetail.style.display = "none";
-      }
     });
     await silentRefresh();
     return;
@@ -871,12 +867,8 @@ monitorGrid.addEventListener("click", async (event) => {
     if (!ids.length) return;
     if (!window.confirm(`Clear ${ids.length} monitor${ids.length > 1 ? "s" : ""} from New · last 48h?`)) return;
     await runButtonProgress(target, ids, "Clearing", async (id) => {
-      await chrome.runtime.sendMessage({ type: "delete-monitor", monitorId: id });
+      await chrome.runtime.sendMessage({ type: "update-monitor", payload: { id, hiddenFromNew48h: true } });
       checkedIds.delete(id);
-      if (id === selectedMonitorId) {
-        selectedMonitorId = null;
-        monitorDetail.style.display = "none";
-      }
     });
     await silentRefresh();
     return;
