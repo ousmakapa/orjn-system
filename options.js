@@ -1,5 +1,5 @@
 import { buildDiffRows, summarizeDiff, getLogs, clearLogs, addLog } from "./shared.js";
-import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata } from "./shopify.js";
+import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache } from "./shopify.js";
 
 const monitorGrid = document.getElementById("monitor-grid");
 const monitorDetail = document.getElementById("monitor-detail");
@@ -9,6 +9,7 @@ const changedOnlyInput = document.getElementById("changed-only");
 const bulkCheckBtn = document.getElementById("bulk-check");
 const bulkImportBtn = document.getElementById("bulk-import");
 const bulkDeleteBtn = document.getElementById("bulk-delete");
+const bulkDeleteShopifyBtn = document.getElementById("bulk-delete-shopify");
 const selectAllBtn = document.getElementById("select-all");
 const deselectBtn = document.getElementById("deselect-all");
 const checkAllBtn = document.getElementById("check-all");
@@ -17,6 +18,16 @@ const undoLastBtn = document.getElementById("undo-last");
 const filterBrand = document.getElementById("filter-brand");
 const filterType = document.getElementById("filter-type");
 const filterSort = document.getElementById("filter-sort");
+const openShopifyUnmonitoredBtn = document.getElementById("open-shopify-unmonitored-btn");
+const shopifyUnmonitoredPanel = document.getElementById("shopify-unmonitored-panel");
+const shopifyUnmonitoredStatus = document.getElementById("shopify-unmonitored-status");
+const shopifyUnmonitoredList = document.getElementById("shopify-unmonitored-list");
+const shopifyUnmonitoredRefreshBtn = document.getElementById("shopify-unmonitored-refresh-btn");
+const shopifyUnmonitoredClearSelectedBtn = document.getElementById("shopify-unmonitored-clear-selected-btn");
+const shopifyUnmonitoredClearBtn = document.getElementById("shopify-unmonitored-clear-btn");
+const shopifyUnmonitoredDeleteSelectedBtn = document.getElementById("shopify-unmonitored-delete-selected-btn");
+const shopifyUnmonitoredDeleteAllBtn = document.getElementById("shopify-unmonitored-delete-all-btn");
+const closeShopifyUnmonitoredBtn = document.getElementById("close-shopify-unmonitored-btn");
 
 let allMonitors = [];
 let selectedMonitorId = null;
@@ -26,6 +37,8 @@ let lastCheckedId = null;
 let lastCheckedGroupKey = null;
 let canCheck = false; // requires Shopify connection OR test mode
 let autoEnabled = true; // mirrors chrome.storage autoIntervalEnabled
+let shopifyUnmonitoredProducts = [];
+const selectedShopifyUnmonitoredIds = new Set();
 
 const PAGE_SIZE = 50; // 10 cols × 5 rows
 const groupPages = new Map();   // groupKey → currentPage (0-indexed)
@@ -54,6 +67,10 @@ function timeAgo(iso) {
 
 function getDomain(url) {
   try { return new URL(url).hostname; } catch { return url; }
+}
+
+function normalizeSku(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function createStatCard(label, value, tone = "") {
@@ -174,6 +191,7 @@ function renderProductData(p, monitorId) {
         ${field("Brand", p.brand)}
         ${field("Type", p.type)}
         ${field("Gender", p.gender)}
+        ${field("Gender display", p.genderDisplay)}
         ${field("Color", p.color)}
         ${field("Price", priceStr)}
         ${field("SKU / Code", p.sku)}
@@ -648,13 +666,17 @@ function renderGrid(monitors) {
 
   const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
   const errorMons = monitors.filter((m) => m.status === "error");
+  const selectedNewMons = newMons.filter((m) => checkedIds.has(m.id));
 
   const newSection = newMons.length
     ? buildGroup(
         NEW_GROUP_KEY,
         `<span class="site-group-title new-group-title">New · last 48h</span>`,
         newMons,
-        `<div class="site-group-actions"><button class="site-clear-btn inline-button danger" data-ids="${escapeHtml(newMons.map((m) => m.id).join(","))}">Clear</button></div>`
+        `<div class="site-group-actions">
+          <button class="site-clear-selected-btn inline-button" data-ids="${escapeHtml(selectedNewMons.map((m) => m.id).join(","))}" ${selectedNewMons.length ? "" : "disabled"}>Clear selected</button>
+          <button class="site-clear-btn inline-button danger" data-ids="${escapeHtml(newMons.map((m) => m.id).join(","))}">Clear</button>
+        </div>`
       )
     : "";
 
@@ -686,13 +708,35 @@ function updateBulkBtn() {
   const n = checkedIds.size;
   bulkCheckBtn.disabled = n === 0 || !canCheck;
   bulkDeleteBtn.disabled = n === 0;
+  bulkDeleteShopifyBtn.disabled = n === 0;
   bulkImportBtn.disabled = n === 0;
   bulkCheckBtn.textContent = n > 0 ? `Check selected (${n})` : "Check selected";
   bulkDeleteBtn.textContent = n > 0 ? `Delete selected (${n})` : "Delete selected";
+  bulkDeleteShopifyBtn.textContent = n > 0 ? `Delete from Shopify + Monitors (${n})` : "Delete from Shopify + Monitors";
   bulkImportBtn.textContent = n > 0 ? `Import to Shopify (${n})` : "Import to Shopify";
   const bulkIntervalRow = document.getElementById("bulk-interval-row");
   if (bulkIntervalRow) bulkIntervalRow.style.display = n > 0 ? "" : "none";
   selectAllBtn.style.display = "";
+}
+
+function setProgressLabel(button, action, current, total) {
+  button.textContent = `${action} ${current}/${total}...`;
+}
+
+async function runButtonProgress(button, items, action, worker) {
+  const total = items.length;
+  const originalText = button.textContent;
+  const originalDisabled = button.disabled;
+  button.disabled = true;
+  try {
+    for (let index = 0; index < total; index++) {
+      setProgressLabel(button, action, index + 1, total);
+      await worker(items[index], index, total);
+    }
+  } finally {
+    button.textContent = originalText;
+    button.disabled = originalDisabled;
+  }
 }
 
 function renderAll() {
@@ -747,7 +791,7 @@ function addSelectorChip(list, value) {
 }
 
 // Grid clicks: checkbox, site-select, site-check, or square-to-expand
-monitorGrid.addEventListener("click", (event) => {
+monitorGrid.addEventListener("click", async (event) => {
   const target = event.target;
 
   if (target.classList.contains("group-toggle-btn")) {
@@ -806,18 +850,35 @@ monitorGrid.addEventListener("click", (event) => {
     return;
   }
 
+  if (target.classList.contains("site-clear-selected-btn")) {
+    const ids = target.dataset.ids.split(",").filter(Boolean);
+    if (!ids.length) return;
+    if (!window.confirm(`Clear ${ids.length} selected monitor${ids.length > 1 ? "s" : ""} from New · last 48h?`)) return;
+    await runButtonProgress(target, ids, "Clearing", async (id) => {
+      await chrome.runtime.sendMessage({ type: "delete-monitor", monitorId: id });
+      checkedIds.delete(id);
+      if (id === selectedMonitorId) {
+        selectedMonitorId = null;
+        monitorDetail.style.display = "none";
+      }
+    });
+    await silentRefresh();
+    return;
+  }
+
   if (target.classList.contains("site-clear-btn")) {
     const ids = target.dataset.ids.split(",").filter(Boolean);
     if (!ids.length) return;
     if (!window.confirm(`Clear ${ids.length} monitor${ids.length > 1 ? "s" : ""} from New · last 48h?`)) return;
-    chrome.runtime.sendMessage({ type: "delete-monitors-batch", monitorIds: ids }).then(async () => {
-      ids.forEach((id) => checkedIds.delete(id));
-      if (ids.includes(selectedMonitorId)) {
+    await runButtonProgress(target, ids, "Clearing", async (id) => {
+      await chrome.runtime.sendMessage({ type: "delete-monitor", monitorId: id });
+      checkedIds.delete(id);
+      if (id === selectedMonitorId) {
         selectedMonitorId = null;
         monitorDetail.style.display = "none";
       }
-      await silentRefresh();
     });
+    await silentRefresh();
     return;
   }
 
@@ -1085,14 +1146,14 @@ bulkImportBtn.addEventListener("click", async () => {
 
   const toImport = allMonitors.filter(m => checkedIds.has(m.id));
   bulkImportBtn.disabled = true;
-  bulkImportBtn.textContent = `Importing 0 / ${n}…`;
+  setProgressLabel(bulkImportBtn, "Importing", 0, n);
 
   const succeeded = [];
   const failed = [];
 
   for (let i = 0; i < toImport.length; i++) {
     const monitor = toImport[i];
-    bulkImportBtn.textContent = `Importing ${i + 1} / ${n}…`;
+    setProgressLabel(bulkImportBtn, "Importing", i + 1, n);
     try {
       if (monitor.shopifyProductId) {
         throw new Error("Already imported to Shopify; this monitor is kept for ongoing sync.");
@@ -1157,7 +1218,7 @@ bulkImportBtn.addEventListener("click", async () => {
   } else if (failed.length) {
     alert(`❌ All ${n} imports failed:\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
   } else {
-    alert(`✓ Imported ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""} to Shopify as drafts. Monitors were kept for ongoing sync.`);
+    alert(`✓ Imported ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""} to Shopify as active products. Monitors were kept for ongoing sync.`);
   }
 });
 
@@ -1166,21 +1227,62 @@ bulkDeleteBtn.addEventListener("click", async () => {
   if (!n) return;
   if (!window.confirm(`Delete ${n} monitor${n > 1 ? "s" : ""}? This cannot be undone.`)) return;
 
-  bulkDeleteBtn.textContent = `Deleting ${n}…`;
+  const ids = Array.from(checkedIds);
+  bulkDeleteBtn.textContent = `Deleting 0/${n}...`;
+  bulkDeleteBtn.disabled = true;
+  bulkCheckBtn.disabled = true;
+  for (let i = 0; i < ids.length; i++) {
+    setProgressLabel(bulkDeleteBtn, "Deleting", i + 1, n);
+    await chrome.runtime.sendMessage({ type: "delete-monitor", monitorId: ids[i] });
+    if (ids[i] === selectedMonitorId) {
+      selectedMonitorId = null;
+      monitorDetail.style.display = "none";
+    }
+    checkedIds.delete(ids[i]);
+  }
+
+  await loadDashboard();
+  refreshUndoCount();
+});
+
+bulkDeleteShopifyBtn.addEventListener("click", async () => {
+  const n = checkedIds.size;
+  if (!n) return;
+  if (!window.confirm(`Delete ${n} selected item${n > 1 ? "s" : ""} from Shopify and from monitors? This cannot be undone.`)) return;
+
+  const targets = allMonitors.filter((monitor) => checkedIds.has(monitor.id));
+  const failures = [];
+  bulkDeleteShopifyBtn.textContent = `Deleting 0/${n}...`;
+  bulkDeleteShopifyBtn.disabled = true;
   bulkDeleteBtn.disabled = true;
   bulkCheckBtn.disabled = true;
 
-  await chrome.runtime.sendMessage({ type: "delete-monitors-batch", monitorIds: Array.from(checkedIds) });
-
-  // Close detail panel if the selected monitor was deleted
-  if (checkedIds.has(selectedMonitorId)) {
-    selectedMonitorId = null;
-    monitorDetail.style.display = "none";
+  for (let i = 0; i < targets.length; i++) {
+    const monitor = targets[i];
+    setProgressLabel(bulkDeleteShopifyBtn, "Deleting", i + 1, n);
+    try {
+      if (monitor.shopifyProductId) {
+        await deleteProduct(monitor.shopifyProductId);
+      }
+      await chrome.runtime.sendMessage({ type: "delete-monitor", monitorId: monitor.id });
+      if (monitor.id === selectedMonitorId) {
+        selectedMonitorId = null;
+        monitorDetail.style.display = "none";
+      }
+      checkedIds.delete(monitor.id);
+    } catch (error) {
+      failures.push({
+        name: monitor.productData?.sku || monitor.name || monitor.id,
+        reason: error?.message || String(error) || "Unknown error"
+      });
+    }
   }
 
-  checkedIds.clear();
   await loadDashboard();
   refreshUndoCount();
+  if (failures.length) {
+    alert(`Deleted ${targets.length - failures.length}/${targets.length} selected item${targets.length - failures.length !== 1 ? "s" : ""}.\n\nThese stayed because Shopify delete failed:\n\n${failures.map((item) => `• ${item.name}\n  ${item.reason}`).join("\n\n")}`);
+  }
 });
 
 document.getElementById("apply-interval-selected").addEventListener("click", async () => {
@@ -1189,14 +1291,10 @@ document.getElementById("apply-interval-selected").addEventListener("click", asy
   const unit = Number(document.getElementById("bulk-interval-unit").value) || 1440;
   const minutes = Math.max(1, val * unit);
   const btn = document.getElementById("apply-interval-selected");
-  btn.textContent = "Applying…";
-  btn.disabled = true;
   const targets = allMonitors.filter((m) => checkedIds.has(m.id));
-  await Promise.all(targets.map((m) =>
-    chrome.runtime.sendMessage({ type: "update-monitor", payload: { ...m, intervalMinutes: minutes } })
-  ));
-  btn.textContent = "Apply to selected";
-  btn.disabled = false;
+  await runButtonProgress(btn, targets, "Applying", async (monitor) => {
+    await chrome.runtime.sendMessage({ type: "update-monitor", payload: { ...monitor, intervalMinutes: minutes } });
+  });
   await loadDashboard();
 });
 
@@ -1206,13 +1304,9 @@ document.getElementById("apply-interval-all").addEventListener("click", async ()
   const minutes = Math.max(1, val * unit);
   if (!allMonitors.length) return;
   const btn = document.getElementById("apply-interval-all");
-  btn.textContent = "Applying…";
-  btn.disabled = true;
-  await Promise.all(allMonitors.map((m) =>
-    chrome.runtime.sendMessage({ type: "update-monitor", payload: { ...m, intervalMinutes: minutes } })
-  ));
-  btn.textContent = "Apply to all";
-  btn.disabled = false;
+  await runButtonProgress(btn, allMonitors, "Applying", async (monitor) => {
+    await chrome.runtime.sendMessage({ type: "update-monitor", payload: { ...monitor, intervalMinutes: minutes } });
+  });
   await loadDashboard();
 });
 
@@ -1448,6 +1542,108 @@ async function initMetaSection() {
 fetchMetaBtn.addEventListener("click", fetchAndShowMeta);
 initMetaSection();
 
+function getMonitorSkuSet() {
+  return new Set(
+    allMonitors
+      .map((monitor) => normalizeSku(monitor.productData?.sku))
+      .filter(Boolean)
+  );
+}
+
+function renderShopifyUnmonitoredList() {
+  if (!shopifyUnmonitoredProducts.length) {
+    shopifyUnmonitoredList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No Shopify-only products found.</p>`;
+    shopifyUnmonitoredClearSelectedBtn.disabled = true;
+    shopifyUnmonitoredDeleteSelectedBtn.disabled = true;
+    shopifyUnmonitoredDeleteAllBtn.disabled = true;
+    return;
+  }
+  shopifyUnmonitoredList.innerHTML = shopifyUnmonitoredProducts.map((item) => `
+    <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 16px;border-bottom:1px solid #f3f4f6;cursor:pointer">
+      <input type="checkbox" class="shopify-unmonitored-check" data-id="${escapeHtml(String(item.id))}" ${selectedShopifyUnmonitoredIds.has(String(item.id)) ? "checked" : ""}>
+      <div style="min-width:0;flex:1">
+        <p style="margin:0;font-size:12px;font-weight:700;color:#111">${escapeHtml(item.sku)}</p>
+        ${item.title ? `<p style="margin:2px 0 0;font-size:12px;color:#5f6c7b">${escapeHtml(item.title)}</p>` : ""}
+      </div>
+    </label>
+  `).join("");
+  shopifyUnmonitoredClearSelectedBtn.disabled = selectedShopifyUnmonitoredIds.size === 0;
+  shopifyUnmonitoredDeleteSelectedBtn.disabled = selectedShopifyUnmonitoredIds.size === 0;
+  shopifyUnmonitoredDeleteAllBtn.disabled = shopifyUnmonitoredProducts.length === 0;
+}
+
+async function loadShopifyUnmonitoredProducts(forceRefresh = false) {
+  if (!await isConnected()) {
+    shopifyUnmonitoredStatus.textContent = "Connect Shopify first.";
+    shopifyUnmonitoredProducts = [];
+    selectedShopifyUnmonitoredIds.clear();
+    renderShopifyUnmonitoredList();
+    return;
+  }
+  shopifyUnmonitoredStatus.textContent = "Loading Shopify products…";
+  shopifyUnmonitoredRefreshBtn.disabled = true;
+  try {
+    if (forceRefresh) clearShopifyProductsSnapshotCache();
+    const monitorSkuSet = getMonitorSkuSet();
+    const products = await getShopifyProductsSnapshot();
+    shopifyUnmonitoredProducts = products.filter((product) => !monitorSkuSet.has(normalizeSku(product.sku)));
+    selectedShopifyUnmonitoredIds.clear();
+    shopifyUnmonitoredStatus.textContent = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available but not monitored.`;
+    renderShopifyUnmonitoredList();
+  } catch (error) {
+    shopifyUnmonitoredStatus.textContent = `Error: ${error.message || error}`;
+    shopifyUnmonitoredProducts = [];
+    selectedShopifyUnmonitoredIds.clear();
+    renderShopifyUnmonitoredList();
+  }
+  shopifyUnmonitoredRefreshBtn.disabled = false;
+}
+
+async function clearShopifyUnmonitoredList() {
+  const ids = shopifyUnmonitoredProducts.map((item) => String(item.id));
+  if (!ids.length) return;
+  const originalText = shopifyUnmonitoredClearBtn.textContent;
+  try {
+    await runButtonProgress(shopifyUnmonitoredClearBtn, ids, "Clearing", async (id) => {
+      shopifyUnmonitoredProducts = shopifyUnmonitoredProducts.filter((item) => String(item.id) !== id);
+      selectedShopifyUnmonitoredIds.delete(id);
+      renderShopifyUnmonitoredList();
+    });
+    shopifyUnmonitoredStatus.textContent = "List cleared.";
+  } finally {
+    shopifyUnmonitoredClearBtn.textContent = originalText;
+  }
+}
+
+async function clearSelectedShopifyUnmonitoredList() {
+  const ids = new Set([...selectedShopifyUnmonitoredIds]);
+  if (!ids.size) return;
+  const originalText = shopifyUnmonitoredClearSelectedBtn.textContent;
+  try {
+    await runButtonProgress(shopifyUnmonitoredClearSelectedBtn, [...ids], "Clearing", async (id) => {
+      shopifyUnmonitoredProducts = shopifyUnmonitoredProducts.filter((item) => String(item.id) !== id);
+      selectedShopifyUnmonitoredIds.delete(id);
+      renderShopifyUnmonitoredList();
+    });
+    shopifyUnmonitoredStatus.textContent = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available but not monitored.`;
+  } finally {
+    shopifyUnmonitoredClearSelectedBtn.textContent = originalText;
+  }
+}
+
+async function deleteShopifyUnmonitored(ids, onProgress = null) {
+  const productIds = [...new Set(ids.map((id) => Number(id)).filter(Boolean))];
+  if (!productIds.length) return;
+  for (let index = 0; index < productIds.length; index++) {
+    if (onProgress) onProgress(index + 1, productIds.length);
+    await deleteShopifyProducts([productIds[index]]);
+  }
+  shopifyUnmonitoredProducts = shopifyUnmonitoredProducts.filter((item) => !productIds.includes(Number(item.id)));
+  productIds.forEach((id) => selectedShopifyUnmonitoredIds.delete(String(id)));
+  shopifyUnmonitoredStatus.textContent = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available but not monitored.`;
+  renderShopifyUnmonitoredList();
+}
+
 // ── Logs panel ─────────────────────────────────────────────────────────────
 const logsPanel = document.getElementById("logs-panel");
 const logsList = document.getElementById("logs-list");
@@ -1508,6 +1704,67 @@ logsClearBtn.addEventListener("click", async () => {
   if (!window.confirm("Clear all logs?")) return;
   await clearLogs();
   await loadLogs();
+});
+
+openShopifyUnmonitoredBtn.addEventListener("click", async () => {
+  const isOpen = shopifyUnmonitoredPanel.style.display !== "none";
+  if (isOpen) {
+    shopifyUnmonitoredPanel.style.display = "none";
+  } else {
+    shopifyUnmonitoredPanel.style.display = "";
+    await loadShopifyUnmonitoredProducts();
+    shopifyUnmonitoredPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+closeShopifyUnmonitoredBtn.addEventListener("click", () => {
+  shopifyUnmonitoredPanel.style.display = "none";
+});
+
+shopifyUnmonitoredRefreshBtn.addEventListener("click", () => loadShopifyUnmonitoredProducts(true));
+shopifyUnmonitoredClearSelectedBtn.addEventListener("click", clearSelectedShopifyUnmonitoredList);
+shopifyUnmonitoredClearBtn.addEventListener("click", clearShopifyUnmonitoredList);
+
+shopifyUnmonitoredList.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!target.classList.contains("shopify-unmonitored-check")) return;
+  const id = String(target.dataset.id || "");
+  if (!id) return;
+  if (target.checked) selectedShopifyUnmonitoredIds.add(id);
+  else selectedShopifyUnmonitoredIds.delete(id);
+  renderShopifyUnmonitoredList();
+});
+
+shopifyUnmonitoredDeleteSelectedBtn.addEventListener("click", async () => {
+  const ids = [...selectedShopifyUnmonitoredIds];
+  if (!ids.length) return;
+  if (!window.confirm(`Delete ${ids.length} selected Shopify product${ids.length > 1 ? "s" : ""}?`)) return;
+  const originalText = shopifyUnmonitoredDeleteSelectedBtn.textContent;
+  shopifyUnmonitoredDeleteSelectedBtn.disabled = true;
+  try {
+    await deleteShopifyUnmonitored(ids, (current, total) => {
+      setProgressLabel(shopifyUnmonitoredDeleteSelectedBtn, "Deleting", current, total);
+    });
+  } finally {
+    shopifyUnmonitoredDeleteSelectedBtn.textContent = originalText;
+    shopifyUnmonitoredDeleteSelectedBtn.disabled = selectedShopifyUnmonitoredIds.size === 0;
+  }
+});
+
+shopifyUnmonitoredDeleteAllBtn.addEventListener("click", async () => {
+  const ids = shopifyUnmonitoredProducts.map((item) => String(item.id));
+  if (!ids.length) return;
+  if (!window.confirm(`Delete all ${ids.length} Shopify-only product${ids.length > 1 ? "s" : ""}?`)) return;
+  const originalText = shopifyUnmonitoredDeleteAllBtn.textContent;
+  shopifyUnmonitoredDeleteAllBtn.disabled = true;
+  try {
+    await deleteShopifyUnmonitored(ids, (current, total) => {
+      setProgressLabel(shopifyUnmonitoredDeleteAllBtn, "Deleting", current, total);
+    });
+  } finally {
+    shopifyUnmonitoredDeleteAllBtn.textContent = originalText;
+    shopifyUnmonitoredDeleteAllBtn.disabled = shopifyUnmonitoredProducts.length === 0;
+  }
 });
 
 // Keep log count in button updated when dashboard refreshes

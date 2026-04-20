@@ -603,11 +603,12 @@ select option { background: #ffffff; color: var(--ink); }
 }
 
 .square-thumb-wrap {
-  width: 100%;
-  aspect-ratio: 1.5 / 1;
+  width: 84%;
+  aspect-ratio: 1.7 / 1;
   border: 1px solid var(--border);
   background: var(--vault);
   overflow: hidden;
+  margin: 0 auto;
 }
 
 .square-thumb {
@@ -645,11 +646,15 @@ select option { background: #ffffff; color: var(--ink); }
   color: #5f6c7b;
   line-height: 1.35;
   margin: 0;
-  min-height: 24px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.square-live-line {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .square-meta {

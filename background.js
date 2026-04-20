@@ -272,10 +272,11 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
   const selectors = Array.isArray(monitor.selectors)
     ? monitor.selectors
     : (monitor.selector ? [monitor.selector] : []);
+  const priceAdjustment = Number(monitor.priceAdjustment) || 80;
 
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (selectors, monitorName) => {
+    func: (selectors, monitorName, priceAdjustment) => {
       const nt = (v) => (v ?? "").replace(/\s+/g, " ").replace(/\u00a0/g, " ").trim();
 
       function buildFullText() {
@@ -452,7 +453,7 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
           r.images.push(src);
         });
         r.images = r.images.slice(0, 8);
-        if (r.price != null) { const raw = parseFloat(String(r.price).replace(',', '.')); if (!isNaN(raw)) r.price = String(Math.round(raw + 80)); }
+        if (r.price != null) { const raw = parseFloat(String(r.price).replace(',', '.')); if (!isNaN(raw)) r.price = String(Math.round(raw + priceAdjustment)); }
         return r;
       }
 
@@ -474,7 +475,7 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
         }
         const sorted = [...rawNums].sort((a, b) => a - b);
         const r5 = Math.round;
-        const mk = 80;
+        const mk = priceAdjustment;
         const price = sorted.length ? sorted[0] : null;
         const cmp = sorted.length >= 2 ? sorted[sorted.length - 1] : null;
         const inStock = [], outOfStock = [];
@@ -532,7 +533,7 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
       if (!htmlParts.length) return { ok: false, summary: "", html: "", error: errors.join("; "), fullPage, liveData };
       return { ok: true, summary: summaryParts.join("\n\n"), html: htmlParts.join("\n"), matched: selectors.join(", "), fullPage, liveData };
     },
-    args: [selectors, monitor.name]
+    args: [selectors, monitor.name, priceAdjustment]
   });
 
   return result;
@@ -541,10 +542,10 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
 // Inject a MutationObserver into an already-loaded tab that fires tryCapture()
 // every time the DOM changes and stores the result in window.__monitorResult.
 // The service worker then polls for that value at 100 ms intervals.
-async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorName) {
+async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorName, priceAdjustment = 80) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    func: (selectors, captureFullPage, monitorName) => {
+    func: (selectors, captureFullPage, monitorName, priceAdjustment) => {
       window.__monitorObserverActive = true;
       window.__monitorResult = null;
 
@@ -722,7 +723,7 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
           r.images.push(src);
         });
         r.images = r.images.slice(0, 8);
-        if (r.price != null) { const raw = parseFloat(String(r.price).replace(',', '.')); if (!isNaN(raw)) r.price = String(Math.round(raw + 80)); }
+        if (r.price != null) { const raw = parseFloat(String(r.price).replace(',', '.')); if (!isNaN(raw)) r.price = String(Math.round(raw + priceAdjustment)); }
         return r;
       }
 
@@ -739,7 +740,7 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         }
         const sorted = [...rawNums].sort((a, b) => a - b);
         const r5 = Math.round;
-        const mk = 80;
+        const mk = priceAdjustment;
         const price = sorted.length ? sorted[0] : null;
         const cmp = sorted.length >= 2 ? sorted[sorted.length - 1] : null;
         const inStock = [], outOfStock = [];
@@ -848,7 +849,7 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         attemptCapture();
       }, 300);
     },
-    args: [selectors, captureFullPage, monitorName]
+    args: [selectors, captureFullPage, monitorName, priceAdjustment]
   });
 }
 
@@ -891,16 +892,19 @@ async function captureSnapshotInHiddenTab(monitor, captureFullPage = false, _ret
       return { ok: false, error: "Tab closed unexpectedly" };
     }
 
-    // Step 2: reload immediately for a clean render (ensures lazy JS runs fresh)
-    await chrome.tabs.reload(tab.id);
-    await waitForTabLoad(tab.id);
-    if (!captureTabIds.has(tab.id)) {
-      if (_retryCount < 2) return captureSnapshotInHiddenTab(monitor, captureFullPage, _retryCount + 1, isBatch);
-      return { ok: false, error: "Tab closed unexpectedly after reload" };
+    // Step 2: only do the extra reload for full first-time captures.
+    // Routine checks only need fast live price/size data.
+    if (captureFullPage) {
+      await chrome.tabs.reload(tab.id);
+      await waitForTabLoad(tab.id);
+      if (!captureTabIds.has(tab.id)) {
+        if (_retryCount < 2) return captureSnapshotInHiddenTab(monitor, captureFullPage, _retryCount + 1, isBatch);
+        return { ok: false, error: "Tab closed unexpectedly after reload" };
+      }
     }
 
     // Step 3: inject observer once and poll up to 60 s
-    await injectCaptureObserver(tab.id, selectors, captureFullPage, monitor.name);
+    await injectCaptureObserver(tab.id, selectors, captureFullPage, monitor.name, Number(monitor.priceAdjustment) || 80);
     const result = await pollForResult(tab.id, 60000);
 
     if (result === null) {
@@ -936,16 +940,22 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
   const next = { ...monitor };
 
   try {
-    const isFirstRun = !monitor.lastHtmlSnapshot;
+    const needsFullCapture =
+      !monitor.lastHtmlSnapshot ||
+      !monitor.productData ||
+      !monitor.productData.name ||
+      !monitor.productData.sku ||
+      !Array.isArray(monitor.productData.images) ||
+      !monitor.productData.images.length;
 
     // On first run, capture from the tab the user already has open (faster,
     // already logged-in, no extra network request). Fall back to hidden tab if
     // the tab is gone or not scriptable.
-    const snapshot = isFirstRun && currentTabId
+    const snapshot = needsFullCapture && currentTabId
       ? await captureSnapshotFromCurrentTab(currentTabId, monitor).catch(() =>
           captureSnapshotInHiddenTab(monitor, true, 0, isBatch)
         )
-      : await captureSnapshotInHiddenTab(monitor, isFirstRun, 0, isBatch);
+      : await captureSnapshotInHiddenTab(monitor, needsFullCapture, 0, isBatch);
 
     if (snapshot.stopped) return;
 
@@ -962,7 +972,7 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
       next.status = "ok";
       next.lastError = "";
 
-      if (isFirstRun) {
+      if (needsFullCapture) {
         next.lastSnapshot = snapshot.summary;
         next.lastHtmlSnapshot = snapshot.html;
         next.lastChangedAt = "";
@@ -975,18 +985,23 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
           next.initialFullPageText = snapshot.fullPage.text;
           next.initialCapturedAt = new Date().toISOString();
           next.productData = snapshot.fullPage.productData || null;
+          if (next.productData) {
+            const extractedGender = next.productData.gender || null;
+            next.productData.gender = extractedGender || "Not defined";
+            next.productData.extractedGender = extractedGender;
+            next.productData.genderDisplay = next.productData.genderDisplay || next.productData.gender;
+          }
           if (monitor.productDataOverrides && next.productData) {
             next.productData = { ...next.productData, ...monitor.productDataOverrides };
           } else if (monitor.productDataOverrides) {
             next.productData = { ...monitor.productDataOverrides };
           }
+          if (next.productData) {
+            next.productData.gender = next.productData.extractedGender || "Not defined";
+            next.productData.genderDisplay = next.productData.genderDisplay || next.productData.gender;
+          }
         }
 
-        if (snapshot.liveData) {
-          chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
-            if (!shopifyTestMode) updateShopifyForMonitor(next, snapshot.liveData).catch(() => {});
-          });
-        }
       } else {
         const htmlChanged = snapshot.html !== monitor.lastHtmlSnapshot;
         const prevLive = monitor.lastExtractedData;
@@ -1058,11 +1073,12 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
           });
         }
 
-        if (newLive) {
-          chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
-            if (!shopifyTestMode) updateShopifyForMonitor(next, newLive).catch(() => {});
-          });
-        }
+      }
+
+      if (snapshot.liveData) {
+        chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
+          if (!shopifyTestMode) updateShopifyForMonitor(next, snapshot.liveData).catch(() => {});
+        });
       }
     }
   } catch (error) {
@@ -1112,7 +1128,8 @@ async function createMonitor(payload, currentTabId = null) {
     lastExtractedData: null,
     previousExtractedData: null,
     lastExtractedAt: "",
-    productDataOverrides: payload.productDataOverrides || null
+    productDataOverrides: payload.productDataOverrides || null,
+    priceAdjustment: Number(payload.priceAdjustment) || 80
   };
 
   const monitors = await getMonitors();
@@ -1126,7 +1143,7 @@ async function createMonitor(payload, currentTabId = null) {
   return monitor;
 }
 
-async function createMonitorsBatch(items, selectors, senderTabId, sharedOverrides = null) {
+async function createMonitorsBatch(items, selectors, senderTabId, sharedOverrides = null, priceAdjustment = 80) {
   const created = [];
   await withStorageLock(async () => {
     const monitors = await getMonitors();
@@ -1141,7 +1158,8 @@ async function createMonitorsBatch(items, selectors, senderTabId, sharedOverride
         lastError: "", status: "idle", changeCount: 0,
         initialFullPageText: "", initialCapturedAt: "",
         productData: null, lastExtractedData: null, previousExtractedData: null,
-        lastExtractedAt: "", productDataOverrides: sharedOverrides || null
+        lastExtractedAt: "", productDataOverrides: sharedOverrides || null,
+        priceAdjustment: Number(priceAdjustment) || 80
       };
       monitors.unshift(monitor);
       created.push(monitor);
@@ -1289,7 +1307,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       if (message.type === "create-monitors-batch") {
         const senderTabId = sender?.tab?.id ?? null;
-        const created = await createMonitorsBatch(message.payload.items, message.payload.selectors, senderTabId, message.payload.productDataOverrides || null);
+        const created = await createMonitorsBatch(
+          message.payload.items,
+          message.payload.selectors,
+          senderTabId,
+          message.payload.productDataOverrides || null,
+          message.payload.priceAdjustment
+        );
         sendResponse({ ok: true, count: created.length });
         return;
       }

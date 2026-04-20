@@ -13,9 +13,14 @@ const SHOPIFY_DEFAULTS = {
   apiVersion: "2025-01"
 };
 const SHOPIFY_CACHE_TTL_MS = 5 * 60 * 1000;
+const SHOPIFY_API_MIN_INTERVAL_MS = 520;
+const SHOPIFY_API_MAX_RETRIES = 4;
 let envConfigPromise = null;
 let locationsCache = null;
 let metadataCache = null;
+let productsSnapshotCache = null;
+let shopifyApiQueue = Promise.resolve();
+let nextShopifyApiRequestAt = 0;
 
 function getMonitorLogMeta(monitor = {}) {
   const pd = monitor.productData || {};
@@ -56,6 +61,39 @@ async function logShopifyError(monitor, details) {
 
 function isFreshCacheEntry(entry) {
   return !!entry && (Date.now() - entry.timestamp) < SHOPIFY_CACHE_TTL_MS;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryDelayMs(res, attempt) {
+  const retryAfter = Number(res.headers.get("Retry-After"));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.max(retryAfter * 1000, SHOPIFY_API_MIN_INTERVAL_MS);
+  }
+  return Math.min(2000 * (attempt + 1), 8000);
+}
+
+async function enqueueShopifyApiCall(task) {
+  const run = async () => {
+    const waitMs = Math.max(0, nextShopifyApiRequestAt - Date.now());
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+    nextShopifyApiRequestAt = Date.now() + SHOPIFY_API_MIN_INTERVAL_MS;
+    return task();
+  };
+
+  const queued = shopifyApiQueue.then(run, run);
+  shopifyApiQueue = queued.catch(() => {});
+  return queued;
+}
+
+function invalidateShopifyCaches({ locations = false, metadata = false, products = false } = {}) {
+  if (locations) locationsCache = null;
+  if (metadata) metadataCache = null;
+  if (products) productsSnapshotCache = null;
 }
 
 // ── Color normalization ────────────────────────────────────────────────────
@@ -120,7 +158,11 @@ function getEuSize(usSize, brand, gender) {
   else if (/reebok/i.test(b)) chartBrand = "Reebok";
   else if (/puma/i.test(b)) chartBrand = "Puma";
   if (!chartBrand) return null;
-  const chartGender = /women|girl|female/i.test(String(gender || "")) ? "Women" : "Men";
+  const genderText = String(gender || "").trim();
+  let chartGender = null;
+  if (/women|girl|female/i.test(genderText)) chartGender = "Women";
+  else if (/men|boy|male/i.test(genderText)) chartGender = "Men";
+  if (!chartGender) return null;
   const chart = SIZE_CHARTS[chartBrand]?.[chartGender];
   if (!chart) return null;
   const n = parseFloat(String(usSize).replace(/[^\d.]/g, ""));
@@ -230,28 +272,48 @@ export async function connectShopify(clientSecret) {
 }
 
 export async function disconnectShopify() {
-  locationsCache = null;
-  metadataCache = null;
+  invalidateShopifyCaches({ locations: true, metadata: true, products: true });
   await chrome.storage.local.remove(["shopifyToken"]);
 }
 
-async function shopifyFetch(path, options = {}) {
+async function shopifyApiRequest(path, options = {}, { rawResponse = false } = {}) {
   const token = await getAccessToken();
   if (!token) throw new Error("Not connected to Shopify");
   const { shop, apiVersion } = await getShopifyConfig();
-  const res = await fetch(`https://${shop}/admin/api/${apiVersion}${path}`, {
-    ...options,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Content-Type": "application/json",
-      ...(options.headers || {})
+  const url = `https://${shop}/admin/api/${apiVersion}${path}`;
+
+  for (let attempt = 0; attempt <= SHOPIFY_API_MAX_RETRIES; attempt++) {
+    const res = await enqueueShopifyApiCall(() =>
+      fetch(url, {
+        ...options,
+        headers: {
+          "X-Shopify-Access-Token": token,
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+      })
+    );
+
+    if (res.status === 429 && attempt < SHOPIFY_API_MAX_RETRIES) {
+      const delayMs = getRetryDelayMs(res, attempt);
+      nextShopifyApiRequestAt = Math.max(nextShopifyApiRequestAt, Date.now() + delayMs);
+      await sleep(delayMs);
+      continue;
     }
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Shopify API ${res.status}: ${body}`);
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Shopify API ${res.status}: ${body}`);
+    }
+
+    return rawResponse ? res : res.json();
   }
-  return res.json();
+
+  throw new Error("Shopify API 429: retry limit reached");
+}
+
+async function shopifyFetch(path, options = {}) {
+  return shopifyApiRequest(path, options);
 }
 
 export async function getLocations() {
@@ -267,29 +329,65 @@ export async function createProduct(product) {
     method: "POST",
     body: JSON.stringify({ product })
   });
-  metadataCache = null;
+  if (data.product && isFreshCacheEntry(productsSnapshotCache)) {
+    const baseSku = deriveBaseSkuFromVariants(data.product.variants || []);
+    if (baseSku) {
+      productsSnapshotCache = {
+        value: [
+          {
+            id: data.product.id,
+            title: data.product.title || "",
+            status: data.product.status || "",
+            sku: baseSku,
+            variantSkus: (data.product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean)
+          },
+          ...productsSnapshotCache.value.filter((entry) => Number(entry.id) !== Number(data.product.id))
+        ],
+        timestamp: Date.now()
+      };
+    }
+  }
+  invalidateShopifyCaches({ metadata: true });
   return data.product;
 }
 
 export async function deleteProduct(productId) {
-  const token = await getAccessToken();
-  if (!token) throw new Error("Not connected to Shopify");
-  const { shop, apiVersion } = await getShopifyConfig();
-  const res = await fetch(`https://${shop}/admin/api/${apiVersion}/products/${productId}.json`, {
-    method: "DELETE",
-    headers: { "X-Shopify-Access-Token": token }
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Shopify API ${res.status}: ${body}`);
+  await shopifyApiRequest(`/products/${productId}.json`, { method: "DELETE" }, { rawResponse: true });
+  if (isFreshCacheEntry(productsSnapshotCache)) {
+    productsSnapshotCache = {
+      value: productsSnapshotCache.value.filter((entry) => Number(entry.id) !== Number(productId)),
+      timestamp: Date.now()
+    };
   }
-  metadataCache = null;
+  invalidateShopifyCaches({ metadata: true });
 }
 
 async function getProductById(productId) {
   if (!productId) return null;
   const data = await shopifyFetch(`/products/${productId}.json?fields=id,variants`);
   return data.product || null;
+}
+
+function deriveBaseSkuFromVariants(variants = []) {
+  const skus = variants.map((variant) => String(variant?.sku || "").trim()).filter(Boolean);
+  if (!skus.length) return "";
+  if (skus.length === 1) return skus[0];
+  const prefixes = skus.map((sku) => {
+    const idx = sku.lastIndexOf("-");
+    return idx > 0 ? sku.slice(0, idx).trim() : "";
+  }).filter(Boolean);
+  if (prefixes.length === skus.length && prefixes.every((prefix) => prefix === prefixes[0])) {
+    return prefixes[0];
+  }
+  return skus[0];
+}
+
+function findCachedProductBySkuPrefix(baseSku) {
+  if (!baseSku || !isFreshCacheEntry(productsSnapshotCache)) return null;
+  return productsSnapshotCache.value.find((product) =>
+    product.sku === baseSku ||
+    (product.variantSkus || []).some((sku) => sku === baseSku || sku.startsWith(`${baseSku}-`))
+  ) || null;
 }
 
 async function getInventoryLevels(inventoryItemIds, locationIds) {
@@ -318,10 +416,7 @@ export async function getShopifyMetadata() {
     const url = pageInfo
       ? `/products.json?limit=250&fields=vendor,product_type,tags&page_info=${pageInfo}`
       : `/products.json?limit=250&fields=vendor,product_type,tags`;
-    const { shop, apiVersion } = await getShopifyConfig();
-    const res = await fetch(`https://${shop}/admin/api/${apiVersion}${url}`, {
-      headers: { "X-Shopify-Access-Token": await getAccessToken(), "Content-Type": "application/json" }
-    });
+    const res = await shopifyApiRequest(url, {}, { rawResponse: true });
     const link = res.headers.get("Link") || "";
     const data = await res.json();
     (data.products || []).forEach(p => {
@@ -360,8 +455,7 @@ async function saveSkuMapping(mapping) {
 }
 
 async function findProductBySkuPrefix(baseSku) {
-  const token = await getAccessToken();
-  if (!token) return null;
+  if (!await getAccessToken()) return null;
   let pageInfo = null;
   let firstPage = true;
   while (firstPage || pageInfo) {
@@ -369,10 +463,7 @@ async function findProductBySkuPrefix(baseSku) {
     const path = pageInfo
       ? `/products.json?limit=250&fields=id,variants&page_info=${pageInfo}`
       : `/products.json?limit=250&fields=id,variants`;
-    const { shop, apiVersion } = await getShopifyConfig();
-    const res = await fetch(`https://${shop}/admin/api/${apiVersion}${path}`, {
-      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" }
-    });
+    const res = await shopifyApiRequest(path, {}, { rawResponse: true });
     const link = res.headers.get("Link") || "";
     const data = await res.json();
     for (const p of (data.products || [])) {
@@ -382,6 +473,46 @@ async function findProductBySkuPrefix(baseSku) {
     pageInfo = next ? next[1] : null;
   }
   return null;
+}
+
+export async function getShopifyProductsSnapshot() {
+  if (isFreshCacheEntry(productsSnapshotCache)) return productsSnapshotCache.value;
+  const products = [];
+  let pageInfo = null;
+  let firstPage = true;
+  while (firstPage || pageInfo) {
+    firstPage = false;
+    const path = pageInfo
+      ? `/products.json?limit=250&fields=id,title,status,variants&page_info=${pageInfo}`
+      : `/products.json?limit=250&fields=id,title,status,variants`;
+    const res = await shopifyApiRequest(path, {}, { rawResponse: true });
+    const link = res.headers.get("Link") || "";
+    const data = await res.json();
+    for (const product of (data.products || [])) {
+      const baseSku = deriveBaseSkuFromVariants(product.variants || []);
+      if (!baseSku) continue;
+      products.push({
+        id: product.id,
+        title: product.title || "",
+        status: product.status || "",
+        sku: baseSku,
+        variantSkus: (product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean)
+      });
+    }
+    const next = link.match(/<[^>]*page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    pageInfo = next ? next[1] : null;
+  }
+  productsSnapshotCache = { value: products, timestamp: Date.now() };
+  return products;
+}
+
+export async function deleteShopifyProducts(productIds) {
+  const ids = [...new Set((productIds || []).filter(Boolean))];
+  await Promise.all(ids.map((productId) => deleteProduct(productId)));
+}
+
+export function clearShopifyProductsSnapshotCache() {
+  invalidateShopifyCaches({ products: true });
 }
 
 export async function updateShopifyForMonitor(monitor, liveData) {
@@ -549,6 +680,10 @@ export async function importMonitorProduct(monitor) {
       existing = await getProductById(mapping[baseSku]).catch(() => null);
     }
     if (!existing) {
+      const cached = findCachedProductBySkuPrefix(baseSku);
+      if (cached?.id) existing = { id: cached.id };
+    }
+    if (!existing) {
       existing = await findProductBySkuPrefix(baseSku);
     }
     if (existing?.id) {
@@ -556,17 +691,29 @@ export async function importMonitorProduct(monitor) {
     }
   }
   const brand = matchExisting(pd.brand || "", meta.vendors);
-  const gender = pd.gender || "";
+  const gender = pd.gender || "Not defined";
+  const genderDisplay = pd.genderDisplay || gender;
+  const sizeGender = pd.extractedGender || (gender !== "Not defined" ? gender : "") || "";
   const productType = matchExisting(pd.type || "", meta.types);
-  const normalizedColor = normalizeColor(pd.color) || pd.color || null;
+  const extractedColor = String(pd.color || "").trim();
+  const normalizedColor = normalizeColor(extractedColor) || null;
 
-  // Tags: gender + color (normalized if recognized, raw otherwise)
-  const rawTags = [gender, normalizedColor].filter(Boolean);
-  const tags = rawTags.map(t => matchExisting(t, meta.tags));
+  // Always keep the extracted color as a Shopify tag.
+  // If a normalized color also exists, include it too unless it's the same tag ignoring case.
+  const genderTags =
+    genderDisplay === "Both"
+      ? ["Men", "Women"]
+      : (genderDisplay && genderDisplay !== "Not defined" ? [genderDisplay] : []);
+  const rawTags = [...genderTags, extractedColor, normalizedColor]
+    .filter(Boolean)
+    .filter((tag, index, arr) =>
+      arr.findIndex((value) => String(value).toLowerCase() === String(tag).toLowerCase()) === index
+    );
+  const tags = rawTags.map((tag) => matchExisting(tag, meta.tags));
 
   const variants = allSizesUS.length
     ? allSizesUS.map(usSize => {
-        const euSize = getEuSize(usSize, brand, gender);
+        const euSize = getEuSize(usSize, brand, sizeGender);
         const option1 = euSize ? String(euSize) : usSize;
         const variantSku = baseSku ? `${baseSku}-${usSize}` : usSize;
         const variant = {
@@ -627,7 +774,7 @@ export async function importMonitorProduct(monitor) {
   if (locations.length && created.variants) {
     await Promise.all(created.variants.map(async (variant) => {
       const usSize = allSizesUS.find(us => {
-        const eu = getEuSize(us, brand, gender);
+        const eu = getEuSize(us, brand, sizeGender);
         return eu ? String(eu) === variant.option1 : us === variant.option1;
       });
       const qty = usSize

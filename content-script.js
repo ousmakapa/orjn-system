@@ -118,6 +118,22 @@
         <option value="Sandal">Sandal</option>
         <option value="Boot">Boot</option>
       </select>
+      <div style="margin-bottom:10px">
+        <p style="margin:0 0 6px;font-size:12px;color:#5f6c7b;font-weight:600">Gender</p>
+        <div id="mpanel-gender" style="display:flex;gap:6px">
+          <button type="button" data-gender-value="Men" style="flex:1;padding:8px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Men</button>
+          <button type="button" data-gender-value="Women" style="flex:1;padding:8px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Women</button>
+          <button type="button" data-gender-value="Both" style="flex:1;padding:8px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Both</button>
+        </div>
+      </div>
+      <select id="mpanel-price-adjustment" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid rgba(23,32,42,0.18);border-radius:10px;font:inherit;color:#17202a;margin-bottom:12px;outline:none;background:#fff;cursor:pointer;">
+        <option value="80" selected>Add price - 80</option>
+        <option value="70">Add price - 70</option>
+        <option value="75">Add price - 75</option>
+        <option value="80">Add price - 80</option>
+        <option value="85">Add price - 85</option>
+        <option value="90">Add price - 90</option>
+      </select>
       <div style="display:flex;gap:8px;">
         <button id="mpanel-cancel" style="flex:1;padding:9px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Cancel</button>
         <button id="mpanel-create" style="flex:1;padding:9px 0;background:#ff5a36;color:#fff;border:none;border-radius:10px;cursor:pointer;font:inherit;font-weight:600;">Create monitor</button>
@@ -128,6 +144,7 @@
     STATE.panel = panel;
 
     panel.querySelector("#mpanel-name").value = document.title || "";
+    bindGenderButtons(panel.querySelector("#mpanel-gender"));
 
     panel.querySelector("#mpanel-cancel").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -140,6 +157,33 @@
     });
 
     return panel;
+  }
+
+  function bindGenderButtons(container) {
+    if (!container) return;
+    container.querySelectorAll("[data-gender-value]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const shouldActivate = button.dataset.active !== "true";
+        container.querySelectorAll("[data-gender-value]").forEach((btn) => {
+          btn.dataset.active = "";
+          btn.style.background = "#fff";
+          btn.style.borderColor = "rgba(23,32,42,0.15)";
+          btn.style.color = "#17202a";
+        });
+        if (shouldActivate) {
+          button.dataset.active = "true";
+          button.style.background = "#ff5a36";
+          button.style.borderColor = "#ff5a36";
+          button.style.color = "#fff";
+        }
+      });
+    });
+  }
+
+  function getSelectedGender(container) {
+    const active = container?.querySelector('[data-gender-value][data-active="true"]');
+    return active?.dataset.genderValue || null;
   }
 
   function updatePanelHint() {
@@ -181,8 +225,13 @@
     const name = STATE.panel.querySelector("#mpanel-name").value.trim() || document.title || "Page monitor";
     const selectors = [...STATE.pickedSelectors];
     const selectedType = STATE.panel.querySelector("#mpanel-type").value || null;
+    const selectedGender = getSelectedGender(STATE.panel.querySelector("#mpanel-gender"));
+    const priceAdjustment = Number(STATE.panel.querySelector("#mpanel-price-adjustment")?.value) || 80;
     const createBtn = STATE.panel.querySelector("#mpanel-create");
     const hint = STATE.panel.querySelector("#mpanel-hint");
+    const productDataOverrides = {};
+    if (selectedType) productDataOverrides.type = selectedType;
+    if (selectedGender) productDataOverrides.genderDisplay = selectedGender;
 
     createBtn.textContent = "Creating…";
     createBtn.disabled = true;
@@ -192,7 +241,8 @@
         type: "create-monitor",
         payload: {
           name, url: location.href, selectors, autoCheck: false, intervalMinutes: 1440,
-          productDataOverrides: selectedType ? { type: selectedType } : null
+          productDataOverrides: Object.keys(productDataOverrides).length ? productDataOverrides : null,
+          priceAdjustment
         }
       },
       (response) => {
@@ -352,6 +402,22 @@
         <option value="Sandal">Sandal</option>
         <option value="Boot">Boot</option>
       </select>
+      <div style="margin-bottom:10px">
+        <p style="margin:0 0 6px;font-size:12px;color:#5f6c7b;font-weight:600">Gender</p>
+        <div id="mpanel-multi-gender" style="display:flex;gap:6px">
+          <button type="button" data-gender-value="Men" style="flex:1;padding:8px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Men</button>
+          <button type="button" data-gender-value="Women" style="flex:1;padding:8px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Women</button>
+          <button type="button" data-gender-value="Both" style="flex:1;padding:8px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Both</button>
+        </div>
+      </div>
+      <select id="mpanel-multi-price-adjustment" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid rgba(23,32,42,0.18);border-radius:10px;font:inherit;color:#17202a;margin-bottom:12px;outline:none;background:#fff;cursor:pointer;">
+        <option value="80" selected>Add price - 80</option>
+        <option value="70">Add price - 70</option>
+        <option value="75">Add price - 75</option>
+        <option value="80">Add price - 80</option>
+        <option value="85">Add price - 85</option>
+        <option value="90">Add price - 90</option>
+      </select>
       <div style="display:flex;gap:8px;">
         <button id="mpanel-multi-cancel" style="flex:1;padding:9px 0;border:1px solid rgba(23,32,42,0.15);background:#fff;border-radius:10px;cursor:pointer;font:inherit;color:#17202a;">Cancel</button>
         <button id="mpanel-multi-create" style="flex:1;padding:9px 0;background:#ff5a36;color:#fff;border:none;border-radius:10px;cursor:pointer;font:inherit;font-weight:600;">Create monitors</button>
@@ -360,6 +426,7 @@
     `;
     document.documentElement.appendChild(panel);
     MULTI.panel = panel;
+    bindGenderButtons(panel.querySelector("#mpanel-multi-gender"));
     panel.querySelector("#mpanel-multi-cancel").addEventListener("click", e => { e.stopPropagation(); stopMultiPicker(); });
     panel.querySelector("#mpanel-multi-create").addEventListener("click", e => { e.stopPropagation(); createMonitorsBatch(); });
   }
@@ -376,13 +443,22 @@
     const cancelBtn = MULTI.panel.querySelector("#mpanel-multi-cancel");
     const status = MULTI.panel.querySelector("#mpanel-multi-status");
     const selectedType = MULTI.panel.querySelector("#mpanel-multi-type")?.value || "";
-    const productDataOverrides = selectedType ? { type: selectedType } : null;
+    const selectedGender = getSelectedGender(MULTI.panel.querySelector("#mpanel-multi-gender"));
+    const priceAdjustment = Number(MULTI.panel.querySelector("#mpanel-multi-price-adjustment")?.value) || 80;
+    const productDataOverrides = {};
+    if (selectedType) productDataOverrides.type = selectedType;
+    if (selectedGender) productDataOverrides.genderDisplay = selectedGender;
     createBtn.disabled = true;
     createBtn.textContent = "Creating…";
     if (status) status.textContent = `0/${items.length} — opening tabs…`;
     chrome.runtime.sendMessage({
       type: "create-monitors-batch",
-      payload: { items, selectors: FL_SELECTORS, productDataOverrides }
+      payload: {
+        items,
+        selectors: FL_SELECTORS,
+        productDataOverrides: Object.keys(productDataOverrides).length ? productDataOverrides : null,
+        priceAdjustment
+      }
     }, (resp) => {
       if (!resp?.ok) {
         createBtn.textContent = "Error";
