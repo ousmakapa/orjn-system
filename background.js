@@ -385,6 +385,23 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
         if (!r.color) { const m = metaText.match(/\bColou?r[:\s]+([^\n\r,/<]{2,30})/i); if (m) r.color = m[1].split('/')[0].trim(); }
         { const ssEl = document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]'); if (ssEl) { const t = ssEl.textContent?.trim(); if (t) { const first = t.split('/')[0].trim(); if (first) r.color = first; } } }
         if (!r.color) { const prodArea = document.querySelector('main,[role="main"]') || document.body; for (const el of prodArea.querySelectorAll('p,span,div')) { if (el.children.length > 0) continue; const t = (el.textContent || '').trim(); if (!t || t.length > 60) continue; const cm = t.match(/^([A-Z][a-zA-Z]+(?:\/[A-Z][a-zA-Z]+)*)$/); if (cm) { const normalized = pickColor(cm[1].split('/')[0]); if (normalized !== "Multicolor") { r.color = normalized; break; } } } }
+        if (!r.gender) {
+          const flHeader = document.querySelector('.ProductDetails-header-V2');
+          if (flHeader) {
+            const genderCandidates = [
+              flHeader.querySelector('span.font-caption.my-2'),
+              ...flHeader.querySelectorAll('span.font-caption,span[class*="font-caption"]')
+            ];
+            for (const candidate of genderCandidates) {
+              const t = candidate?.textContent?.trim();
+              if (t && /\b(men|women|kids|youth|boys|girls|unisex|infant|toddler)/i.test(t)) {
+                r.gender = t;
+                r.source.push("fl-header-gender");
+                break;
+              }
+            }
+          }
+        }
         if (!r.gender) { const m = metaText.match(/\b(Men'?s?|Women'?s?|Kids'?|Youth|Boys'?|Girls'?|Unisex|Infant|Toddler)\b/i); if (m) r.gender = m[1]; }
         if (!r.gender) { for (const sel of ['.product-type','[class*="product-type"]','[class*="eyebrow"]','.product__gender','[class*="gender"]']) { try { const e = document.querySelector(sel); if (e) { const t = e.textContent?.trim(); if (t && /\b(men|women|kids|youth|boys|girls|unisex|infant|toddler)/i.test(t)) { r.gender = t; break; } } } catch(_){} } }
         if (r.gender) r.gender = r.gender.replace(/['\u2019]s?\s*$/i, '').trim();
@@ -677,6 +694,23 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         if (!r.color) { const m = metaText.match(/\bColou?r[:\s]+([^\n\r,/<]{2,30})/i); if (m) r.color = m[1].split('/')[0].trim(); }
         { const ssEl = document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]'); if (ssEl) { const t = ssEl.textContent?.trim(); if (t) { const first = t.split('/')[0].trim(); if (first) r.color = first; } } }
         if (!r.color) { const prodArea = document.querySelector('main,[role="main"]') || document.body; for (const el of prodArea.querySelectorAll('p,span,div')) { if (el.children.length > 0) continue; const t = (el.textContent || '').trim(); if (!t || t.length > 60) continue; const cm = t.match(/^([A-Z][a-zA-Z]+(?:\/[A-Z][a-zA-Z]+)*)$/); if (cm) { const normalized = pickColor(cm[1].split('/')[0]); if (normalized !== "Multicolor") { r.color = normalized; break; } } } }
+        if (!r.gender) {
+          const flHeader = document.querySelector('.ProductDetails-header-V2');
+          if (flHeader) {
+            const genderCandidates = [
+              flHeader.querySelector('span.font-caption.my-2'),
+              ...flHeader.querySelectorAll('span.font-caption,span[class*="font-caption"]')
+            ];
+            for (const candidate of genderCandidates) {
+              const t = candidate?.textContent?.trim();
+              if (t && /\b(men|women|kids|youth|boys|girls|unisex|infant|toddler)/i.test(t)) {
+                r.gender = t;
+                r.source.push("fl-header-gender");
+                break;
+              }
+            }
+          }
+        }
         if (!r.gender) { const m = metaText.match(/\b(Men'?s?|Women'?s?|Kids'?|Youth|Boys'?|Girls'?|Unisex|Infant|Toddler)\b/i); if (m) r.gender = m[1]; }
         if (!r.gender) { for (const sel of ['.product-type','[class*="product-type"]','[class*="eyebrow"]','.product__gender','[class*="gender"]']) { try { const e = document.querySelector(sel); if (e) { const t = e.textContent?.trim(); if (t && /\b(men|women|kids|youth|boys|girls|unisex|infant|toddler)/i.test(t)) { r.gender = t; break; } } } catch(_){} } }
         if (r.gender) r.gender = r.gender.replace(/['\u2019]s?\s*$/i, '').trim();
