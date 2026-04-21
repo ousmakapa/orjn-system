@@ -67,6 +67,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function getRetryDelayMs(res, attempt) {
   const retryAfter = Number(res.headers.get("Retry-After"));
   if (Number.isFinite(retryAfter) && retryAfter > 0) {
@@ -368,6 +376,24 @@ async function getProductById(productId) {
   return data.product || null;
 }
 
+async function getProductsByIds(productIds, onBatch = null) {
+  const ids = [...new Set((productIds || []).map((id) => Number(id)).filter(Boolean))];
+  if (!ids.length) return [];
+  const products = [];
+  let fetchedCount = 0;
+  for (const batch of chunkArray(ids, 100)) {
+    const params = new URLSearchParams({
+      ids: batch.join(","),
+      fields: "id,variants"
+    });
+    const data = await shopifyFetch(`/products.json?${params.toString()}`);
+    products.push(...(data.products || []));
+    fetchedCount += batch.length;
+    if (onBatch) onBatch(fetchedCount, ids.length);
+  }
+  return products;
+}
+
 function deriveBaseSkuFromVariants(variants = []) {
   const skus = variants.map((variant) => String(variant?.sku || "").trim()).filter(Boolean);
   if (!skus.length) return "";
@@ -504,6 +530,64 @@ export async function getShopifyProductsSnapshot() {
   }
   productsSnapshotCache = { value: products, timestamp: Date.now() };
   return products;
+}
+
+export async function getFullyOutOfStockProductIds(productIds, onProgress = null) {
+  const ids = [...new Set((productIds || []).map((id) => Number(id)).filter(Boolean))];
+  if (!ids.length) return [];
+  let lastReported = -1;
+  const reportProgress = (current) => {
+    if (!onProgress) return;
+    const safeCurrent = Math.max(0, Math.min(ids.length, Math.round(current)));
+    if (safeCurrent === lastReported) return;
+    lastReported = safeCurrent;
+    onProgress(safeCurrent, ids.length);
+  };
+  reportProgress(0);
+
+  const locations = await getLocations().catch(() => []);
+  const locationIds = locations.map((location) => location.id).filter(Boolean);
+  const products = await getProductsByIds(ids, (fetchedCount, totalCount) => {
+    reportProgress((fetchedCount / totalCount) * totalCount * 0.35);
+  });
+  const productsById = new Map(products.map((product) => [Number(product.id), product]));
+  const inventoryItemIds = products.flatMap((product) =>
+    (product?.variants || []).map((variant) => variant.inventory_item_id).filter(Boolean)
+  );
+  const totalsByInventoryItemId = new Map();
+
+  if (locationIds.length && inventoryItemIds.length) {
+    const inventoryBatches = chunkArray([...new Set(inventoryItemIds)], 50);
+    for (let batchIndex = 0; batchIndex < inventoryBatches.length; batchIndex++) {
+      const batch = inventoryBatches[batchIndex];
+      const inventoryLevels = await getInventoryLevels(batch, locationIds);
+      inventoryLevels.forEach((level) => {
+        const inventoryItemId = level.inventory_item_id;
+        const current = totalsByInventoryItemId.get(inventoryItemId) || 0;
+        totalsByInventoryItemId.set(inventoryItemId, current + Number(level.available ?? 0));
+      });
+      reportProgress((0.35 + ((batchIndex + 1) / inventoryBatches.length) * 0.35) * ids.length);
+    }
+  }
+
+  const outOfStockIds = [];
+  for (let index = 0; index < ids.length; index++) {
+    const productId = ids[index];
+    reportProgress((0.7 + ((index + 1) / ids.length) * 0.3) * ids.length);
+    const product = productsById.get(productId);
+    const variants = product?.variants || [];
+    if (!variants.length) continue;
+    const isFullyOutOfStock = variants.every((variant) => {
+      if (!locationIds.length) return Number(variant.inventory_quantity ?? 0) <= 0;
+      const total = totalsByInventoryItemId.get(variant.inventory_item_id);
+      const fallbackQty = Number(variant.inventory_quantity ?? 0);
+      return (total ?? fallbackQty) <= 0;
+    });
+    if (isFullyOutOfStock) outOfStockIds.push(productId);
+  }
+
+  reportProgress(ids.length);
+  return outOfStockIds;
 }
 
 export async function deleteShopifyProducts(productIds) {

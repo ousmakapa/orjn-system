@@ -1,5 +1,5 @@
 import { buildDiffRows, summarizeDiff, getLogs, clearLogs, addLog } from "./shared.js";
-import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache } from "./shopify.js";
+import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache, getFullyOutOfStockProductIds } from "./shopify.js";
 
 const monitorGrid = document.getElementById("monitor-grid");
 const monitorDetail = document.getElementById("monitor-detail");
@@ -19,6 +19,7 @@ const filterBrand = document.getElementById("filter-brand");
 const filterType = document.getElementById("filter-type");
 const filterSort = document.getElementById("filter-sort");
 const openShopifyUnmonitoredBtn = document.getElementById("open-shopify-unmonitored-btn");
+const openShopifyOutOfStockBtn = document.getElementById("open-shopify-out-of-stock-btn");
 const shopifyUnmonitoredPanel = document.getElementById("shopify-unmonitored-panel");
 const shopifyUnmonitoredStatus = document.getElementById("shopify-unmonitored-status");
 const shopifyUnmonitoredList = document.getElementById("shopify-unmonitored-list");
@@ -38,6 +39,9 @@ let lastCheckedGroupKey = null;
 let canCheck = false; // requires Shopify connection OR test mode
 let autoEnabled = true; // mirrors chrome.storage autoIntervalEnabled
 let shopifyUnmonitoredProducts = [];
+let shopifyOutOfStockMonitorIds = null;
+let outOfStockSectionHidden = false;
+let lastOutOfStockSignature = "";
 const selectedShopifyUnmonitoredIds = new Set();
 
 const PAGE_SIZE = 50; // 10 cols × 5 rows
@@ -71,6 +75,25 @@ function getDomain(url) {
 
 function normalizeSku(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function isMonitorFullyOutOfStock(monitor) {
+  const live = monitor?.lastExtractedData || {};
+  const inStock = Array.isArray(live.inStock) ? live.inStock.filter(Boolean) : [];
+  const outOfStock = Array.isArray(live.outOfStock) ? live.outOfStock.filter(Boolean) : [];
+  return inStock.length === 0 && outOfStock.length > 0;
+}
+
+function getCombinedOutOfStockMonitorIds(monitors = allMonitors) {
+  const ids = new Set((monitors || []).filter(isMonitorFullyOutOfStock).map((monitor) => monitor.id));
+  if (shopifyOutOfStockMonitorIds) {
+    shopifyOutOfStockMonitorIds.forEach((id) => ids.add(id));
+  }
+  return ids;
+}
+
+function getOutOfStockSignature(monitors = allMonitors) {
+  return [...getCombinedOutOfStockMonitorIds(monitors)].sort().join(",");
 }
 
 function createStatCard(label, value, tone = "") {
@@ -602,6 +625,7 @@ function renderGrid(monitors) {
   const HOURS_48 = 48 * 60 * 60 * 1000;
   const NEW_GROUP_KEY = "__new48h__";
   const ERROR_GROUP_KEY = "__errors__";
+  const SHOPIFY_OOS_GROUP_KEY = "__shopify_oos__";
 
   // Apply group-level brand/type filter then paginate
   function applyGroupFilter(key, mons) {
@@ -666,7 +690,10 @@ function renderGrid(monitors) {
 
   const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
   const errorMons = monitors.filter((m) => m.status === "error");
+  const outOfStockIdSet = getCombinedOutOfStockMonitorIds(monitors);
+  const shopifyOutOfStockMons = [...outOfStockIdSet].map((id) => monitors.find((m) => m.id === id)).filter(Boolean);
   const selectedNewMons = newMons.filter((m) => checkedIds.has(m.id));
+  const selectedShopifyOutOfStockMons = shopifyOutOfStockMons.filter((m) => checkedIds.has(m.id));
 
   const newSection = newMons.length
     ? buildGroup(
@@ -682,6 +709,18 @@ function renderGrid(monitors) {
 
   const errorSection = errorMons.length
     ? buildGroup(ERROR_GROUP_KEY, `<span class="site-group-title error-group-title">Errors</span>`, errorMons)
+    : "";
+
+  const shopifyOutOfStockSection = shopifyOutOfStockMons.length && !outOfStockSectionHidden
+    ? buildGroup(
+        SHOPIFY_OOS_GROUP_KEY,
+        `<span class="site-group-title error-group-title">Out of stock</span>`,
+        shopifyOutOfStockMons,
+        `<div class="site-group-actions">
+          <button class="site-select-btn inline-button" data-ids="${escapeHtml(shopifyOutOfStockMons.map((m) => m.id).join(","))}">${selectedShopifyOutOfStockMons.length === shopifyOutOfStockMons.length && shopifyOutOfStockMons.length ? "Deselect shown" : "Select shown"}</button>
+          <button class="shopify-oos-clear-btn inline-button">Hide</button>
+        </div>`
+      )
     : "";
 
   const groups = new Map();
@@ -701,7 +740,7 @@ function renderGrid(monitors) {
     return buildGroup(domain, `<span class="site-group-title">${escapeHtml(domain)}</span>`, mons, actions);
   }).join("");
 
-  monitorGrid.innerHTML = errorSection + newSection + domainSections;
+  monitorGrid.innerHTML = errorSection + shopifyOutOfStockSection + newSection + domainSections;
 }
 
 function updateBulkBtn() {
@@ -740,9 +779,20 @@ async function runButtonProgress(button, items, action, worker) {
 }
 
 function renderAll() {
+  const currentOutOfStockSignature = getOutOfStockSignature(allMonitors);
+  if (currentOutOfStockSignature !== lastOutOfStockSignature) {
+    outOfStockSectionHidden = false;
+    lastOutOfStockSignature = currentOutOfStockSignature;
+  }
   renderStats(allMonitors);
   populateFilterOptions();
   renderGrid(getFilteredMonitors());
+  if (!openShopifyOutOfStockBtn.disabled) {
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : "Out of stock";
+  }
 
   if (selectedMonitorId) {
     const m = allMonitors.find((x) => x.id === selectedMonitorId);
@@ -811,6 +861,8 @@ monitorGrid.addEventListener("click", async (event) => {
       const HOURS_48 = 48 * 60 * 60 * 1000;
       const groupMonitors = groupKey === "__new48h__"
         ? visible.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48)
+        : groupKey === "__shopify_oos__"
+          ? visible.filter((m) => isMonitorFullyOutOfStock(m) || shopifyOutOfStockMonitorIds?.has(m.id))
         : groupKey === "__errors__"
           ? visible.filter((m) => m.status === "error")
           : visible.filter((m) => getDomain(m.url) === groupKey);
@@ -840,6 +892,16 @@ monitorGrid.addEventListener("click", async (event) => {
     const allSelected = ids.every((id) => checkedIds.has(id));
     ids.forEach((id) => allSelected ? checkedIds.delete(id) : checkedIds.add(id));
     updateBulkBtn();
+    renderGrid(getFilteredMonitors());
+    return;
+  }
+
+  if (target.classList.contains("shopify-oos-clear-btn")) {
+    outOfStockSectionHidden = true;
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : "Out of stock";
     renderGrid(getFilteredMonitors());
     return;
   }
@@ -1591,6 +1653,68 @@ async function loadShopifyUnmonitoredProducts(forceRefresh = false) {
   shopifyUnmonitoredRefreshBtn.disabled = false;
 }
 
+async function loadShopifyOutOfStockMonitors(forceRefresh = false) {
+  if (!await isConnected()) {
+    shopifyOutOfStockMonitorIds = null;
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : "Out of stock";
+    renderGrid(getFilteredMonitors());
+    window.alert("Connect Shopify first.");
+    return;
+  }
+
+  const linkedMonitors = allMonitors.filter((monitor) => monitor.shopifyProductId);
+  if (!linkedMonitors.length) {
+    shopifyOutOfStockMonitorIds = new Set();
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : "Out of stock";
+    renderGrid(getFilteredMonitors());
+    return;
+  }
+
+  const originalText = "Out of stock";
+  openShopifyOutOfStockBtn.disabled = true;
+  try {
+    const productIds = [...new Set(linkedMonitors.map((monitor) => Number(monitor.shopifyProductId)).filter(Boolean))];
+    if (forceRefresh) clearShopifyProductsSnapshotCache();
+    setProgressLabel(openShopifyOutOfStockBtn, "Checking", 0, productIds.length);
+    const outOfStockProductIds = await getFullyOutOfStockProductIds(productIds, (current, total) => {
+      setProgressLabel(openShopifyOutOfStockBtn, "Checking", current, total);
+    });
+    const outOfStockIdSet = new Set(outOfStockProductIds.map((id) => Number(id)));
+    shopifyOutOfStockMonitorIds = new Set(
+      linkedMonitors
+        .filter((monitor) => outOfStockIdSet.has(Number(monitor.shopifyProductId)))
+        .map((monitor) => monitor.id)
+    );
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : "Out of stock";
+    renderGrid(getFilteredMonitors());
+  } catch (error) {
+    shopifyOutOfStockMonitorIds = null;
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : originalText;
+    renderGrid(getFilteredMonitors());
+    window.alert(`Failed to load Shopify out-of-stock monitors: ${error.message || error}`);
+  } finally {
+    if (!shopifyOutOfStockMonitorIds) {
+      const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+      openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+        ? `Out of stock (${combinedOutOfStockIds.size})`
+        : originalText;
+    }
+    openShopifyOutOfStockBtn.disabled = false;
+  }
+}
+
 async function clearShopifyUnmonitoredList() {
   const ids = shopifyUnmonitoredProducts.map((item) => String(item.id));
   if (!ids.length) return;
@@ -1706,6 +1830,24 @@ openShopifyUnmonitoredBtn.addEventListener("click", async () => {
     shopifyUnmonitoredPanel.style.display = "";
     await loadShopifyUnmonitoredProducts();
     shopifyUnmonitoredPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+openShopifyOutOfStockBtn.addEventListener("click", async () => {
+  const hasCombinedOutOfStock = getCombinedOutOfStockMonitorIds(allMonitors).size > 0;
+  if (outOfStockSectionHidden && hasCombinedOutOfStock) {
+    outOfStockSectionHidden = false;
+    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
+      ? `Out of stock (${combinedOutOfStockIds.size})`
+      : "Out of stock";
+    renderGrid(getFilteredMonitors());
+    return;
+  }
+  await loadShopifyOutOfStockMonitors(true);
+  outOfStockSectionHidden = false;
+  if (shopifyOutOfStockMonitorIds) {
+    monitorGrid.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 });
 
