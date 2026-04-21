@@ -23,62 +23,90 @@
             <p id="shopify-error" style="display:none;margin:0;font-size:12px;color:var(--infrared)"></p>
           </div>
           <div class="header-flex-gap"></div>
-          <div class="header-group">
-            <label class="toggle" id="auto-interval-label" title="When on, monitors check automatically at their set interval">
-              <input id="auto-interval-toggle" type="checkbox">
-              <span>Auto</span>
-            </label>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Monitoring</span>
+            <div class="header-group">
+              <label class="toggle" id="auto-interval-label" title="When on, monitors check automatically at their set interval">
+                <input id="auto-interval-toggle" type="checkbox">
+                <span>Auto</span>
+              </label>
+              <label class="toggle" id="test-mode-label" title="Enable to run checks without Shopify. Turn off to revert all changes made during test.">
+                <input id="test-mode-toggle" type="checkbox">
+                <span>Test mode</span>
+              </label>
+              <button id="stop-checks" class="secondary danger" style="display:none">Stop checks</button>
+            </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-group">
-            <label class="toggle" id="test-mode-label" title="Enable to run checks without Shopify. Turn off to revert all changes made during test.">
-              <input id="test-mode-toggle" type="checkbox">
-              <span>Test mode</span>
-            </label>
-            <button id="stop-checks" class="secondary danger" style="display:none">Stop checks</button>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Shopify Views</span>
+            <div class="header-group">
+              <button id="open-shopify-unmonitored-btn" class="ghost">Available on Shopify but not on monitor</button>
+              <button id="open-monitor-not-shopify-btn" class="ghost">Available on monitor but not on Shopify</button>
+              <button id="open-shopify-out-of-stock-btn" class="ghost">Open out of stock</button>
+              <button id="check-shopify-out-of-stock-btn" class="ghost">Check out of stock</button>
+              <button id="open-sku-duplicates-btn" class="ghost">Duplicate SKU cleanup</button>
+            </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-group">
-            <button id="open-shopify-unmonitored-btn" class="ghost">Available on Shopify</button>
-            <button id="open-shopify-out-of-stock-btn" class="ghost">Out of stock</button>
-            <button id="open-logs-btn" class="ghost">Logs</button>
-            <button id="refresh-dashboard" class="ghost">Refresh</button>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Dashboard</span>
+            <div class="header-group">
+              <button id="open-logs-btn" class="ghost">Logs</button>
+              <button id="refresh-dashboard" class="ghost">Refresh</button>
+            </div>
           </div>
         </div>
 
         <!-- ROW 2: Search + Selection + Actions -->
         <div class="header-row header-row--actions">
-          <div class="header-group">
-            <input id="dashboard-search" type="search" placeholder="Search monitors">
-            <label class="toggle">
-              <input id="changed-only" type="checkbox">
-              <span>Changed only</span>
-            </label>
+          <div class="header-cluster header-cluster--wide">
+            <span class="header-cluster-label">Filters</span>
+            <div class="header-group">
+              <input id="dashboard-search" type="search" placeholder="Search monitors">
+              <label class="toggle">
+                <input id="changed-only" type="checkbox">
+                <span>Changed only</span>
+              </label>
+            </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-group">
-            <button id="select-all" class="inline-button">Select all</button>
-            <button id="deselect-all" class="inline-button">Deselect</button>
-            <input id="range-from" type="number" min="1" class="range-input" placeholder="#">
-            <span style="color:var(--muted);font-size:12px">–</span>
-            <input id="range-to" type="number" min="1" class="range-input" placeholder="#">
-            <button id="select-range" class="inline-button">Range</button>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Selection</span>
+            <div class="header-group">
+              <button id="select-all" class="inline-button">Select all</button>
+              <button id="deselect-all" class="inline-button">Deselect</button>
+              <input id="range-from" type="number" min="1" class="range-input" placeholder="#">
+              <span style="color:var(--muted);font-size:12px">–</span>
+              <input id="range-to" type="number" min="1" class="range-input" placeholder="#">
+              <button id="select-range" class="inline-button">Range</button>
+            </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-group">
-            <button id="check-all" class="secondary" disabled>Check all</button>
-            <button id="bulk-check" class="secondary" disabled>Check selected</button>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Checks</span>
+            <div class="header-group">
+              <button id="check-all" class="secondary" disabled>Check all</button>
+              <button id="bulk-check" class="secondary" disabled>Check selected</button>
+            </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-group">
-            <button id="bulk-import" class="import-btn" disabled>Import to Shopify</button>
-            <button id="undo-import" class="inline-button" style="display:none">Undo Import</button>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Shopify Sync</span>
+            <div class="header-group">
+              <button id="bulk-import" class="import-btn" disabled>Import to Shopify</button>
+              <button id="stop-import" class="inline-button danger" style="display:none">Stop Import</button>
+              <button id="undo-import" class="inline-button" style="display:none">Undo Import</button>
+            </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-group">
-            <button id="undo-last" class="inline-button" disabled>Undo (0)</button>
-            <button id="bulk-delete" class="inline-button danger" disabled>Delete selected</button>
-            <button id="bulk-delete-shopify" class="inline-button danger" disabled>Delete from Shopify + Monitors</button>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Cleanup</span>
+            <div class="header-group">
+              <button id="undo-last" class="inline-button" disabled>Undo (0)</button>
+              <button id="bulk-delete" class="inline-button danger" disabled>Delete selected</button>
+              <button id="bulk-delete-shopify" class="inline-button danger" disabled>Delete from Shopify + Monitors</button>
+            </div>
           </div>
         </div>
 
@@ -140,7 +168,7 @@
 
       <section id="shopify-unmonitored-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
-          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Available on Shopify, Not Monitored</span>
+          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Available on Shopify but not on monitor</span>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button id="shopify-unmonitored-refresh-btn" class="ghost" style="font-size:11px;padding:4px 10px">Refresh</button>
             <button id="shopify-unmonitored-clear-selected-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Clear selected</button>
@@ -152,6 +180,35 @@
         </div>
         <div id="shopify-unmonitored-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
         <div id="shopify-unmonitored-list" style="max-height:360px;overflow-y:auto"></div>
+      </section>
+
+      <section id="monitor-not-shopify-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Available on monitor but not on Shopify</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button id="monitor-not-shopify-refresh-btn" class="ghost" style="font-size:11px;padding:4px 10px">Refresh</button>
+            <button id="monitor-not-shopify-clear-selected-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Clear selected</button>
+            <button id="monitor-not-shopify-clear-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Clear</button>
+            <button id="close-monitor-not-shopify-btn" class="ghost" style="font-size:11px;padding:4px 10px">× Close</button>
+          </div>
+        </div>
+        <div id="monitor-not-shopify-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
+        <div id="monitor-not-shopify-list" style="max-height:360px;overflow-y:auto"></div>
+      </section>
+
+      <section id="sku-duplicates-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Duplicate SKU Cleanup</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button id="sku-duplicates-refresh-btn" class="ghost" style="font-size:11px;padding:4px 10px">Refresh</button>
+            <button id="sku-duplicates-select-all-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Select all extras</button>
+            <button id="sku-duplicates-deselect-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Deselect all</button>
+            <button id="sku-duplicates-delete-btn" class="inline-button danger" style="font-size:11px;padding:4px 10px">Delete selected</button>
+            <button id="close-sku-duplicates-btn" class="ghost" style="font-size:11px;padding:4px 10px">× Close</button>
+          </div>
+        </div>
+        <div id="sku-duplicates-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
+        <div id="sku-duplicates-list" style="max-height:480px;overflow-y:auto"></div>
       </section>
 
       <section id="monitor-grid" class="monitor-grid"></section>

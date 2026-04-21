@@ -2,6 +2,69 @@ const STORAGE_KEY = "pageMonitors";
 
 export const DEFAULT_INTERVAL_MINUTES = 1440;
 
+const CANONICAL_BRAND_RULES = [
+  { canonical: "Nike", patterns: [/^nike$/i, /^nike\s+sportswear$/i, /^nike\s+sb$/i] },
+  { canonical: "Jordan", patterns: [/^air\s*jordan$/i, /^jordan$/i, /^jordan\s+brand$/i] },
+  { canonical: "Adidas", patterns: [/^adidas$/i, /^adidas\s+originals$/i, /^adidas\s+sportswear$/i] },
+  { canonical: "Puma", patterns: [/^puma$/i, /^puma\s+sportswear$/i] },
+  { canonical: "Reebok", patterns: [/^reebok$/i, /^reebok\s+classic$/i] },
+  { canonical: "New Balance", patterns: [/^new\s*balance$/i, /^newbalance$/i, /^nb$/i] },
+  { canonical: "Converse", patterns: [/^converse$/i, /^converse\s+all\s*star$/i, /^converse\s+cons$/i] },
+  { canonical: "Vans", patterns: [/^vans$/i] },
+  { canonical: "Under Armour", patterns: [/^under\s*armou?r$/i, /^ua$/i] },
+  { canonical: "Asics", patterns: [/^asics$/i, /^asics\s+tiger$/i] },
+  { canonical: "Saucony", patterns: [/^saucony$/i] },
+  { canonical: "Brooks", patterns: [/^brooks$/i, /^brooks\s+running$/i] },
+  { canonical: "Hoka", patterns: [/^hoka$/i, /^hoka\s+one\s+one$/i, /^hokaoneone$/i] },
+  { canonical: "ON Cloud", patterns: [/^on$/i, /^on\s*running$/i, /^on\s*cloud$/i, /^on\s*cloud\s*running$/i] },
+  { canonical: "Salomon", patterns: [/^salomon$/i, /^salomon\s+sportstyle$/i] },
+  { canonical: "Timberland", patterns: [/^timberland$/i, /^timberland\s+pro$/i] },
+  { canonical: "UGG", patterns: [/^ugg$/i, /^ugg\s+australia$/i] },
+  { canonical: "Dr. Martens", patterns: [/^dr\.?\s*martens$/i, /^doc\s*martens$/i, /^drmartens$/i] },
+  { canonical: "Birkenstock", patterns: [/^birkenstock$/i] },
+  { canonical: "Clarks", patterns: [/^clarks$/i, /^clarks\s+originals$/i] },
+  { canonical: "The North Face", patterns: [/^the\s*north\s*face$/i, /^north\s*face$/i, /^tnf$/i] },
+  { canonical: "Columbia", patterns: [/^columbia$/i, /^columbia\s+sportswear$/i] },
+  { canonical: "Patagonia", patterns: [/^patagonia$/i] },
+  { canonical: "Supreme", patterns: [/^supreme$/i] },
+  { canonical: "Off-White", patterns: [/^off[\s-]*white$/i, /^offwhite$/i] },
+  { canonical: "Balenciaga", patterns: [/^balenciaga$/i] },
+  { canonical: "Gucci", patterns: [/^gucci$/i] },
+  { canonical: "Louis Vuitton", patterns: [/^louis\s*vuitton$/i, /^lv$/i] },
+  { canonical: "Yeezy", patterns: [/^yeezy$/i, /^adidas\s+yeezy$/i] },
+  { canonical: "Fila", patterns: [/^fila$/i] },
+  { canonical: "Tommy Hilfiger", patterns: [/^tommy\s*hilfiger$/i, /^tommy$/i] },
+  { canonical: "Ralph Lauren", patterns: [/^ralph\s*lauren$/i, /^polo\s*ralph\s*lauren$/i, /^polo$/i] },
+  { canonical: "Lacoste", patterns: [/^lacoste$/i] },
+  { canonical: "Champion", patterns: [/^champion$/i] },
+  { canonical: "Kappa", patterns: [/^kappa$/i] },
+  { canonical: "Umbro", patterns: [/^umbro$/i] },
+  { canonical: "Ellesse", patterns: [/^ellesse$/i] },
+  { canonical: "Diadora", patterns: [/^diadora$/i] },
+  { canonical: "Le Coq Sportif", patterns: [/^le\s*coq\s*sportif$/i, /^lecoqsportif$/i] },
+  { canonical: "Mizuno", patterns: [/^mizuno$/i] },
+  { canonical: "Karhu", patterns: [/^karhu$/i] },
+  { canonical: "Crocs", patterns: [/^crocs$/i] },
+  { canonical: "Skechers", patterns: [/^skechers$/i, /^skecher$/i] },
+  { canonical: "Steve Madden", patterns: [/^steve\s*madden$/i] },
+  { canonical: "Ecco", patterns: [/^ecco$/i] },
+  { canonical: "Geox", patterns: [/^geox$/i] },
+  { canonical: "Camper", patterns: [/^camper$/i] },
+  { canonical: "Stussy", patterns: [/^stussy$/i, /^st[uü]ssy$/i] },
+  { canonical: "Palace", patterns: [/^palace$/i, /^palace\s+skateboards$/i] },
+  { canonical: "Kith", patterns: [/^kith$/i] },
+  { canonical: "Carhartt", patterns: [/^carhartt$/i, /^carhartt\s+wip$/i] },
+  { canonical: "Dickies", patterns: [/^dickies$/i] },
+  { canonical: "Stone Island", patterns: [/^stone\s*island$/i] },
+  { canonical: "Moncler", patterns: [/^moncler$/i] },
+  { canonical: "Arc'teryx", patterns: [/^arc[\s'’]*teryx$/i] },
+  { canonical: "Merrell", patterns: [/^merrell$/i] },
+  { canonical: "Keen", patterns: [/^keen$/i] },
+  { canonical: "Teva", patterns: [/^teva$/i] },
+  { canonical: "Calvin Klein", patterns: [/^calvin\s*klein$/i, /^ck$/i] },
+  { canonical: "Hugo Boss", patterns: [/^hugo\s*boss$/i, /^boss$/i, /^boss\s+by\s+hugo\s+boss$/i] }
+];
+
 export function uid(prefix = "monitor") {
   const random = Math.random().toString(36).slice(2, 10);
   return `${prefix}_${Date.now()}_${random}`;
@@ -12,6 +75,51 @@ export function normalizeText(value) {
     .replace(/\s+/g, " ")
     .replace(/\u00a0/g, " ")
     .trim();
+}
+
+export function canonicalizeBrand(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  for (const rule of CANONICAL_BRAND_RULES) {
+    if (rule.patterns.some((pattern) => pattern.test(normalized))) {
+      return rule.canonical;
+    }
+  }
+  return normalized;
+}
+
+function normalizeMonitorBrandData(monitor) {
+  if (!monitor || typeof monitor !== "object") return monitor;
+  let changed = false;
+  const next = { ...monitor };
+
+  if (monitor.productData && typeof monitor.productData === "object") {
+    const normalizedBrand = canonicalizeBrand(monitor.productData.brand);
+    if (normalizedBrand && normalizedBrand !== monitor.productData.brand) {
+      next.productData = { ...monitor.productData, brand: normalizedBrand };
+      changed = true;
+    }
+  }
+
+  if (monitor.productDataOverrides && typeof monitor.productDataOverrides === "object") {
+    const normalizedOverrideBrand = canonicalizeBrand(monitor.productDataOverrides.brand);
+    if (normalizedOverrideBrand && normalizedOverrideBrand !== monitor.productDataOverrides.brand) {
+      next.productDataOverrides = { ...monitor.productDataOverrides, brand: normalizedOverrideBrand };
+      changed = true;
+    }
+  }
+
+  return changed ? next : monitor;
+}
+
+function normalizeMonitors(monitors) {
+  let changed = false;
+  const normalized = (Array.isArray(monitors) ? monitors : []).map((monitor) => {
+    const next = normalizeMonitorBrandData(monitor);
+    if (next !== monitor) changed = true;
+    return next;
+  });
+  return { changed, monitors: normalized };
 }
 
 export function buildSelector(element) {
@@ -127,12 +235,17 @@ export async function clearLogs() {
 
 export async function getMonitors() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
-  return stored[STORAGE_KEY] || [];
+  const normalized = normalizeMonitors(stored[STORAGE_KEY] || []);
+  if (normalized.changed) {
+    await chrome.storage.local.set({ [STORAGE_KEY]: normalized.monitors });
+  }
+  return normalized.monitors;
 }
 
 export async function saveMonitors(monitors) {
+  const normalized = normalizeMonitors(monitors);
   await chrome.storage.local.set({
-    [STORAGE_KEY]: monitors
+    [STORAGE_KEY]: normalized.monitors
   });
 }
 

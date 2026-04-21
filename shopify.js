@@ -1,4 +1,4 @@
-import { addLog } from "./shared.js";
+import { addLog, canonicalizeBrand } from "./shared.js";
 
 const IMPORT_HISTORY_KEY = "shopifyImportHistory";
 const SHOPIFY_ENV_KEYS = {
@@ -24,7 +24,7 @@ let nextShopifyApiRequestAt = 0;
 
 function getMonitorLogMeta(monitor = {}) {
   const pd = monitor.productData || {};
-  const brand = pd.brand || "";
+  const brand = canonicalizeBrand(pd.brand || "");
   const sku = pd.sku || "";
   return {
     title: [brand, sku].filter(Boolean).join(" ") || monitor.name || "Shopify",
@@ -152,8 +152,9 @@ const SIZE_CHARTS = {
   Nike:   { Men: {"3.5":"35.5","4":"36","4.5":"36.5","5":"37.5","5.5":"38","6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"45.5","12":"46","12.5":"47","13":"47.5","13.5":"48","14":"48.5","14.5":"49","15":"49.5","15.5":"50","16":"50.5","16.5":"51","17":"51.5","17.5":"52","18":"52.5"}, Women: {"5":"35.5","5.5":"36","6":"36.5","6.5":"37.5","7":"38","7.5":"38.5","8":"39","8.5":"40","9":"40.5","9.5":"41","10":"42","10.5":"42.5","11":"43","11.5":"44","12":"44.5","12.5":"45","13":"45.5","13.5":"46","14":"47","14.5":"47.5","15":"48"} },
   Jordan: { Men: {"3":"35.5","3.5":"36","4":"36.5","4.5":"37.5","5":"37.5","5.5":"38","6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"45.5","12":"46","12.5":"47","13":"47.5","13.5":"48","14":"48.5","14.5":"49","15":"49.5","15.5":"50","16":"50.5","16.5":"51","17":"51.5","17.5":"52","18":"52.5"}, Women: {"5":"35.5","5.5":"36","6":"36.5","6.5":"37.5","7":"38","7.5":"38.5","8":"39","8.5":"40","9":"40.5","9.5":"41","10":"42","10.5":"42.5","11":"43","11.5":"44","12":"44.5","12.5":"45","13":"45.5","13.5":"46","14":"47","14.5":"47.5","15":"48"} },
   Adidas: { Men: {"4":"36","4.5":"36 2/3","5":"37 1/3","5.5":"38","6":"38 2/3","6.5":"39 1/3","7":"40","7.5":"40 2/3","8":"41 1/3","8.5":"42","9":"42 2/3","9.5":"43 1/3","10":"44","10.5":"44 2/3","11":"45 1/3","11.5":"46","12":"46 2/3","12.5":"47 1/3","13":"48","13.5":"48 2/3","14":"49 1/3","14.5":"50","15":"50 2/3","16":"51 1/3","17":"52 2/3","18":"53 1/3","19":"54 2/3","20":"55 2/3"}, Women: {"5":"36","5.5":"36 2/3","6":"37 1/3","6.5":"38","7":"38 2/3","7.5":"39 1/3","8":"40","8.5":"40 2/3","9":"41 1/3","9.5":"42","10":"42 2/3","10.5":"43 1/3","11":"44","11.5":"44 2/3","12":"45 1/3","12.5":"46","13":"46 2/3"} },
-  Reebok: { Men: {"4":"34.5","4.5":"35","5":"36","5.5":"36.5","6":"37.5","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"46","13":"47","14":"48.5"}, Women: {"6":"36","7":"37","8":"38","9":"39","9.5":"40","10.5":"41","11":"42","11.5":"42.5","12":"43","12.5":"44","13":"44.5","13.5":"45","14":"46","15":"47"} },
-  Puma:   { Men: {"6":"38","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"46","12.5":"46.5","13":"47","14":"48.5","15":"49.5","16":"51"}, Women: {"5.5":"35.5","6":"36","6.5":"37","7":"37.5","7.5":"38","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5"} }
+  Reebok: { Men: {"4":"34.5","4.5":"35","5":"36","5.5":"36.5","6":"37.5","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"45.5","12.5":"46","13":"47","13.5":"48","14":"48.5","15":"50","16":"52","17":"53.5","18":"55"}, Women: {"5.5":"34.5","6":"35","6.5":"36","7":"36.5","7.5":"37.5","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5","11.5":"43","12":"44"} },
+  Puma:     { Men: {"6":"38","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"46","12.5":"46.5","13":"47","14":"48.5","15":"49.5","16":"51"}, Women: {"5.5":"35.5","6":"36","6.5":"37","7":"37.5","7.5":"38","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5"} },
+  Converse: { Men: {"6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"46","12":"46.5","13":"47.5","14":"49","15":"50","16":"51.5"} }
 };
 
 function getEuSize(usSize, brand, gender) {
@@ -165,11 +166,13 @@ function getEuSize(usSize, brand, gender) {
   else if (/adidas/i.test(b)) chartBrand = "Adidas";
   else if (/reebok/i.test(b)) chartBrand = "Reebok";
   else if (/puma/i.test(b)) chartBrand = "Puma";
+  else if (/converse/i.test(b)) chartBrand = "Converse";
   if (!chartBrand) return null;
   const genderText = String(gender || "").trim();
   let chartGender = null;
   if (/women|girl|female/i.test(genderText)) chartGender = "Women";
   else if (/men|boy|male/i.test(genderText)) chartGender = "Men";
+  // Unisex / Both / Not defined / empty → fall back to Men's if available
   if (!chartGender) return null;
   const chart = SIZE_CHARTS[chartBrand]?.[chartGender];
   if (!chart) return null;
@@ -347,7 +350,8 @@ export async function createProduct(product) {
             title: data.product.title || "",
             status: data.product.status || "",
             sku: baseSku,
-            variantSkus: (data.product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean)
+            variantSkus: (data.product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean),
+            image: data.product.images?.[0]?.src || ""
           },
           ...productsSnapshotCache.value.filter((entry) => Number(entry.id) !== Number(data.product.id))
         ],
@@ -372,8 +376,46 @@ export async function deleteProduct(productId) {
 
 async function getProductById(productId) {
   if (!productId) return null;
-  const data = await shopifyFetch(`/products/${productId}.json?fields=id,variants`);
+  const data = await shopifyFetch(`/products/${productId}.json?fields=id,status,vendor,variants`);
   return data.product || null;
+}
+
+async function updateProductStatus(productId, status) {
+  if (!productId || !status) return null;
+  const data = await shopifyFetch(`/products/${productId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({ product: { id: productId, status } })
+  });
+  return data.product || null;
+}
+
+async function updateProductVendor(productId, vendor) {
+  if (!productId || !vendor) return null;
+  const data = await shopifyFetch(`/products/${productId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({ product: { id: productId, vendor } })
+  });
+  invalidateShopifyCaches({ metadata: true });
+  return data.product || null;
+}
+
+async function getAllShopifyProductVendors() {
+  const products = [];
+  let pageInfo = null;
+  let firstPage = true;
+  while (firstPage || pageInfo) {
+    firstPage = false;
+    const path = pageInfo
+      ? `/products.json?limit=250&fields=id,vendor&page_info=${pageInfo}`
+      : `/products.json?limit=250&fields=id,vendor`;
+    const res = await shopifyApiRequest(path, {}, { rawResponse: true });
+    const link = res.headers.get("Link") || "";
+    const data = await res.json();
+    products.push(...(data.products || []));
+    const next = link.match(/<[^>]*page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    pageInfo = next ? next[1] : null;
+  }
+  return products;
 }
 
 async function getProductsByIds(productIds, onBatch = null) {
@@ -509,20 +551,20 @@ export async function getShopifyProductsSnapshot() {
   while (firstPage || pageInfo) {
     firstPage = false;
     const path = pageInfo
-      ? `/products.json?limit=250&fields=id,title,status,variants&page_info=${pageInfo}`
-      : `/products.json?limit=250&fields=id,title,status,variants`;
+      ? `/products.json?limit=250&fields=id,title,status,variants,images&page_info=${pageInfo}`
+      : `/products.json?limit=250&fields=id,title,status,variants,images`;
     const res = await shopifyApiRequest(path, {}, { rawResponse: true });
     const link = res.headers.get("Link") || "";
     const data = await res.json();
     for (const product of (data.products || [])) {
       const baseSku = deriveBaseSkuFromVariants(product.variants || []);
-      if (!baseSku) continue;
       products.push({
         id: product.id,
         title: product.title || "",
         status: product.status || "",
-        sku: baseSku,
-        variantSkus: (product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean)
+        sku: baseSku || "",
+        variantSkus: (product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean),
+        image: product.images?.[0]?.src || ""
       });
     }
     const next = link.match(/<[^>]*page_info=([^&>]+)[^>]*>;\s*rel="next"/);
@@ -603,6 +645,7 @@ export async function updateShopifyForMonitor(monitor, liveData) {
   try {
     if (!await isConnected()) return;
     const baseSku = monitor.productData?.sku;
+    const canonicalBrand = canonicalizeBrand(monitor.productData?.brand || "");
     if (!baseSku) return;
 
     const mapping = await getSkuMapping();
@@ -633,6 +676,8 @@ export async function updateShopifyForMonitor(monitor, liveData) {
     const compareAt = liveData.compareAt != null ? String(liveData.compareAt) : null;
     const inStock = new Set(liveData.inStock || []);
     const outOfStock = new Set(liveData.outOfStock || []);
+    const shouldSetDraft = inStock.size === 0 && outOfStock.size > 0;
+    const shouldSetActive = inStock.size > 0;
     const locations = await getLocations();
     const locationIds = locations.map((location) => location.id).filter(Boolean);
     const prefix = `${baseSku}-`;
@@ -683,6 +728,29 @@ export async function updateShopifyForMonitor(monitor, liveData) {
       await Promise.all(tasks);
     }));
 
+    if (canonicalBrand && canonicalBrand !== product.vendor) {
+      try {
+        const updatedProduct = await updateProductVendor(product.id, canonicalBrand);
+        product.vendor = updatedProduct?.vendor || canonicalBrand;
+      } catch (error) {
+        errors.push(`Vendor update failed (${canonicalBrand}) for ${baseSku || product.id}: ${formatShopifyError(error)}`);
+      }
+    }
+
+    const desiredStatus = shouldSetDraft ? "draft" : (shouldSetActive ? "active" : null);
+    if (desiredStatus && product.status !== desiredStatus) {
+      try {
+        const updatedProduct = await updateProductStatus(product.id, desiredStatus);
+        if (updatedProduct?.status) {
+          product.status = updatedProduct.status;
+        } else {
+          product.status = desiredStatus;
+        }
+      } catch (error) {
+        errors.push(`Product status update failed (${desiredStatus}) for ${baseSku || product.id}: ${formatShopifyError(error)}`);
+      }
+    }
+
     if (errors.length) {
       throw new Error(errors.join(" | "));
     }
@@ -705,22 +773,42 @@ async function getImportHistory() {
   return Array.isArray(history) ? history : [];
 }
 
-async function pushImportHistory(entry) {
-  const history = await getImportHistory();
-  history.unshift(entry); // newest first
+async function setImportHistory(history) {
   await chrome.storage.local.set({ [IMPORT_HISTORY_KEY]: history });
 }
 
-export async function getRecentImports() {
-  const history = await getImportHistory();
+function normalizeImportHistory(history) {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  return history.filter(e => new Date(e.importedAt).getTime() > cutoff);
+  const seenProductIds = new Set();
+  const result = [];
+  for (const entry of Array.isArray(history) ? history : []) {
+    const productId = Number(entry?.shopifyProductId);
+    const importedAt = entry?.importedAt ? new Date(entry.importedAt).getTime() : 0;
+    if (!productId || !importedAt || importedAt <= cutoff) continue;
+    if (seenProductIds.has(productId)) continue;
+    seenProductIds.add(productId);
+    result.push(entry);
+  }
+  return result;
+}
+
+async function pushImportHistory(entry) {
+  const history = normalizeImportHistory(await getImportHistory()).filter(
+    (item) => Number(item?.shopifyProductId) !== Number(entry?.shopifyProductId)
+  );
+  history.unshift(entry);
+  await setImportHistory(history);
+}
+
+export async function getRecentImports() {
+  const history = normalizeImportHistory(await getImportHistory());
+  await setImportHistory(history);
+  return history;
 }
 
 export async function undoLastImport() {
-  const history = await getImportHistory();
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const idx = history.findIndex(e => new Date(e.importedAt).getTime() > cutoff);
+  const history = normalizeImportHistory(await getImportHistory());
+  const idx = history.findIndex(Boolean);
   if (idx === -1) throw new Error("No imports in the last 24 hours to undo");
 
   const entry = history[idx];
@@ -733,18 +821,74 @@ export async function undoLastImport() {
 
   // Remove from history
   history.splice(idx, 1);
-  await chrome.storage.local.set({ [IMPORT_HISTORY_KEY]: history });
+  await setImportHistory(history);
 
   return entry;
 }
 
+export async function primeImportCaches() {
+  await Promise.all([
+    getShopifyMetadata().catch(() => ({ vendors: [], types: [], tags: [] })),
+    getLocations().catch(() => []),
+    getShopifyProductsSnapshot().catch(() => [])
+  ]);
+}
+
+export async function syncMonitorBrandsToShopify(monitors = []) {
+  if (!await isConnected()) return { updated: 0, checked: 0 };
+  const mapping = await getSkuMapping();
+  let updated = 0;
+  let checked = 0;
+
+  for (const monitor of monitors) {
+    const canonicalBrand = canonicalizeBrand(monitor?.productData?.brand || "");
+    const baseSku = String(monitor?.productData?.sku || "").trim();
+    const productId = Number(monitor?.shopifyProductId || mapping[baseSku] || 0);
+    if (!canonicalBrand || !productId) continue;
+    checked += 1;
+    try {
+      const product = await getProductById(productId);
+      if (product?.vendor !== canonicalBrand) {
+        await updateProductVendor(productId, canonicalBrand);
+        updated += 1;
+      }
+    } catch (_) {}
+  }
+
+  return { updated, checked };
+}
+
+export async function normalizeAllShopifyVendors() {
+  if (!await isConnected()) return { updated: 0, checked: 0 };
+  const products = await getAllShopifyProductVendors();
+  let updated = 0;
+  let checked = 0;
+
+  for (const product of products) {
+    const productId = Number(product?.id);
+    const currentVendor = String(product?.vendor || "").trim();
+    if (!productId || !currentVendor) continue;
+    const canonicalVendor = canonicalizeBrand(currentVendor);
+    checked += 1;
+    if (!canonicalVendor || canonicalVendor === currentVendor) continue;
+    try {
+      await updateProductVendor(productId, canonicalVendor);
+      updated += 1;
+    } catch (_) {}
+  }
+
+  invalidateShopifyCaches({ metadata: true, products: true });
+  return { updated, checked };
+}
+
 // ── Main import ────────────────────────────────────────────────────────────
-export async function importMonitorProduct(monitor) {
+export async function importMonitorProduct(monitor, context = {}) {
   const pd = monitor.productData || {};
   const live = monitor.lastExtractedData || {};
 
   // Fetch existing Shopify metadata to match exact casing
-  const meta = await getShopifyMetadata().catch(() => ({ vendors: [], types: [], tags: [] }));
+  const meta = context.meta || await getShopifyMetadata().catch(() => ({ vendors: [], types: [], tags: [] }));
+  context.meta = meta;
 
   const price = live.price != null ? String(live.price) : (pd.price != null ? String(pd.price) : "0");
   const compareAt = live.compareAt != null ? String(live.compareAt) : null;
@@ -758,7 +902,8 @@ export async function importMonitorProduct(monitor) {
     throw new Error(`Already imported to Shopify for SKU ${baseSku || pd.name || monitor.name}`);
   }
   if (baseSku) {
-    const mapping = await getSkuMapping();
+    const mapping = context.mapping || await getSkuMapping();
+    context.mapping = mapping;
     let existing = null;
     if (mapping[baseSku]) {
       existing = await getProductById(mapping[baseSku]).catch(() => null);
@@ -774,10 +919,10 @@ export async function importMonitorProduct(monitor) {
       throw new Error(`Already imported to Shopify for SKU ${baseSku}`);
     }
   }
-  const brand = matchExisting(pd.brand || "", meta.vendors);
+  const brand = canonicalizeBrand(pd.brand || "");
   const gender = pd.gender || "Not defined";
   const genderDisplay = pd.genderDisplay || gender;
-  const sizeGender = pd.extractedGender || (gender !== "Not defined" ? gender : "") || "";
+  const sizeGender = pd.extractedGender || "";
   const productType = matchExisting(pd.type || "", meta.types);
   const normalizedColor = normalizeColor(pd.color);
 
@@ -847,15 +992,17 @@ export async function importMonitorProduct(monitor) {
 
   // Cache SKU → product ID for future auto-updates
   if (baseSku) {
-    const mapping = await getSkuMapping();
+    const mapping = context.mapping || await getSkuMapping();
+    context.mapping = mapping;
     mapping[baseSku] = created.id;
     await saveSkuMapping(mapping);
   }
 
   // Set inventory at primary location
-  const locations = await getLocations();
+  const locations = context.locations || await getLocations();
+  context.locations = locations;
   if (locations.length && created.variants) {
-    await Promise.all(created.variants.map(async (variant) => {
+      await Promise.all(created.variants.map(async (variant) => {
       const usSize = allSizesUS.find(us => {
         const eu = getEuSize(us, brand, sizeGender);
         return eu ? String(eu) === variant.option1 : us === variant.option1;
@@ -863,6 +1010,7 @@ export async function importMonitorProduct(monitor) {
       const qty = usSize
         ? (inStock.has(usSize) ? 10 : 0)
         : (variant.inventory_quantity ?? 10);
+      if (qty <= 0) return;
       await Promise.all(locations.map((location) =>
         setInventoryLevel(variant.inventory_item_id, location.id, qty).catch(() => {})
       ));

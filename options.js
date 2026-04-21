@@ -1,5 +1,5 @@
-import { buildDiffRows, summarizeDiff, getLogs, clearLogs, addLog } from "./shared.js";
-import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache, getFullyOutOfStockProductIds } from "./shopify.js";
+import { buildDiffRows, summarizeDiff, getLogs, clearLogs, addLog, canonicalizeBrand } from "./shared.js";
+import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache, getFullyOutOfStockProductIds, primeImportCaches } from "./shopify.js";
 
 const monitorGrid = document.getElementById("monitor-grid");
 const monitorDetail = document.getElementById("monitor-detail");
@@ -8,6 +8,7 @@ const searchInput = document.getElementById("dashboard-search");
 const changedOnlyInput = document.getElementById("changed-only");
 const bulkCheckBtn = document.getElementById("bulk-check");
 const bulkImportBtn = document.getElementById("bulk-import");
+const stopImportBtn = document.getElementById("stop-import");
 const bulkDeleteBtn = document.getElementById("bulk-delete");
 const bulkDeleteShopifyBtn = document.getElementById("bulk-delete-shopify");
 const selectAllBtn = document.getElementById("select-all");
@@ -19,7 +20,9 @@ const filterBrand = document.getElementById("filter-brand");
 const filterType = document.getElementById("filter-type");
 const filterSort = document.getElementById("filter-sort");
 const openShopifyUnmonitoredBtn = document.getElementById("open-shopify-unmonitored-btn");
+const openMonitorNotShopifyBtn = document.getElementById("open-monitor-not-shopify-btn");
 const openShopifyOutOfStockBtn = document.getElementById("open-shopify-out-of-stock-btn");
+const checkShopifyOutOfStockBtn = document.getElementById("check-shopify-out-of-stock-btn");
 const shopifyUnmonitoredPanel = document.getElementById("shopify-unmonitored-panel");
 const shopifyUnmonitoredStatus = document.getElementById("shopify-unmonitored-status");
 const shopifyUnmonitoredList = document.getElementById("shopify-unmonitored-list");
@@ -29,6 +32,22 @@ const shopifyUnmonitoredClearBtn = document.getElementById("shopify-unmonitored-
 const shopifyUnmonitoredDeleteSelectedBtn = document.getElementById("shopify-unmonitored-delete-selected-btn");
 const shopifyUnmonitoredDeleteAllBtn = document.getElementById("shopify-unmonitored-delete-all-btn");
 const closeShopifyUnmonitoredBtn = document.getElementById("close-shopify-unmonitored-btn");
+const monitorNotShopifyPanel = document.getElementById("monitor-not-shopify-panel");
+const monitorNotShopifyStatus = document.getElementById("monitor-not-shopify-status");
+const monitorNotShopifyList = document.getElementById("monitor-not-shopify-list");
+const monitorNotShopifyRefreshBtn = document.getElementById("monitor-not-shopify-refresh-btn");
+const monitorNotShopifyClearSelectedBtn = document.getElementById("monitor-not-shopify-clear-selected-btn");
+const monitorNotShopifyClearBtn = document.getElementById("monitor-not-shopify-clear-btn");
+const closeMonitorNotShopifyBtn = document.getElementById("close-monitor-not-shopify-btn");
+const skuDuplicatesPanel = document.getElementById("sku-duplicates-panel");
+const skuDuplicatesStatus = document.getElementById("sku-duplicates-status");
+const skuDuplicatesList = document.getElementById("sku-duplicates-list");
+const skuDuplicatesRefreshBtn = document.getElementById("sku-duplicates-refresh-btn");
+const skuDuplicatesSelectAllBtn = document.getElementById("sku-duplicates-select-all-btn");
+const skuDuplicatesDeselectBtn = document.getElementById("sku-duplicates-deselect-btn");
+const skuDuplicatesDeleteBtn = document.getElementById("sku-duplicates-delete-btn");
+const closeSkuDuplicatesBtn = document.getElementById("close-sku-duplicates-btn");
+const openSkuDuplicatesBtn = document.getElementById("open-sku-duplicates-btn");
 
 let allMonitors = [];
 let selectedMonitorId = null;
@@ -39,12 +58,26 @@ let lastCheckedGroupKey = null;
 let canCheck = false; // requires Shopify connection OR test mode
 let autoEnabled = true; // mirrors chrome.storage autoIntervalEnabled
 let shopifyUnmonitoredProducts = [];
+let monitorNotShopifyMonitors = [];
 let shopifyOutOfStockMonitorIds = null;
+let shopifyProductCount = null;
+let shopifyUniqueSkuCount = null;
 let outOfStockSectionHidden = false;
 let lastOutOfStockSignature = "";
+const dismissedOutOfStockMonitorIds = new Set();
 const selectedShopifyUnmonitoredIds = new Set();
+const selectedMonitorNotShopifyIds = new Set();
+const selectedDuplicateIds = new Set();
+let skuDuplicateGroups = []; // [{ sku, keepProduct, keepReason, extraProducts }]
+let skuDuplicatesAdminBase = ""; // https://admin.shopify.com/store/{name}/products
+let dashboardStorageRefreshTimer = null;
+let dashboardUiStateSaveTimer = null;
+let stopImportRequested = false;
+let importInProgress = false;
 
 const PAGE_SIZE = 50; // 10 cols × 5 rows
+const SHOPIFY_OOS_GROUP_KEY = "__shopify_oos__";
+const DASHBOARD_UI_STATE_KEY = "dashboardUiState";
 const groupPages = new Map();   // groupKey → currentPage (0-indexed)
 const groupFilters = new Map(); // groupKey → { brand: string|null, type: string|null }
 
@@ -77,6 +110,17 @@ function normalizeSku(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function getProductSkuSet(product) {
+  const skus = new Set();
+  const baseSku = normalizeSku(product?.sku);
+  if (baseSku) skus.add(baseSku);
+  for (const sku of (product?.variantSkus || [])) {
+    const normalized = normalizeSku(sku);
+    if (normalized) skus.add(normalized);
+  }
+  return skus;
+}
+
 function isMonitorFullyOutOfStock(monitor) {
   const live = monitor?.lastExtractedData || {};
   const inStock = Array.isArray(live.inStock) ? live.inStock.filter(Boolean) : [];
@@ -92,17 +136,131 @@ function getCombinedOutOfStockMonitorIds(monitors = allMonitors) {
   return ids;
 }
 
+function getVisibleOutOfStockMonitorIds(monitors = allMonitors) {
+  const ids = getCombinedOutOfStockMonitorIds(monitors);
+  dismissedOutOfStockMonitorIds.forEach((id) => ids.delete(id));
+  return ids;
+}
+
 function getOutOfStockSignature(monitors = allMonitors) {
   return [...getCombinedOutOfStockMonitorIds(monitors)].sort().join(",");
+}
+
+function updateOutOfStockButtons() {
+  const count = getVisibleOutOfStockMonitorIds(allMonitors).size;
+  openShopifyOutOfStockBtn.textContent = count
+    ? `Open out of stock (${count})`
+    : "Open out of stock";
+  if (!checkShopifyOutOfStockBtn.disabled) {
+    checkShopifyOutOfStockBtn.textContent = "Check out of stock";
+  }
+}
+
+function collectDashboardUiState() {
+  return {
+    search: searchInput.value || "",
+    changedOnly: !!changedOnlyInput.checked,
+    filterBrand: filterBrand.value || "",
+    filterType: filterType.value || "",
+    filterSort: filterSort.value || "created-desc",
+    collapsedGroups: [...collapsedGroups],
+    groupPages: [...groupPages.entries()],
+    groupFilters: [...groupFilters.entries()],
+    outOfStockSectionHidden: !!outOfStockSectionHidden,
+    dismissedOutOfStockMonitorIds: [...dismissedOutOfStockMonitorIds]
+  };
+}
+
+function scheduleSaveDashboardUiState() {
+  clearTimeout(dashboardUiStateSaveTimer);
+  dashboardUiStateSaveTimer = setTimeout(() => {
+    chrome.storage.local.set({ [DASHBOARD_UI_STATE_KEY]: collectDashboardUiState() }).catch(() => {});
+  }, 120);
+}
+
+async function restoreDashboardUiState() {
+  const { [DASHBOARD_UI_STATE_KEY]: state } = await chrome.storage.local.get(DASHBOARD_UI_STATE_KEY);
+  if (!state || typeof state !== "object") return;
+
+  searchInput.value = state.search || "";
+  changedOnlyInput.checked = !!state.changedOnly;
+  filterBrand.value = state.filterBrand || "";
+  filterType.value = state.filterType || "";
+  filterSort.value = state.filterSort || "created-desc";
+
+  collapsedGroups.clear();
+  for (const key of (state.collapsedGroups || [])) {
+    if (key) collapsedGroups.add(key);
+  }
+
+  groupPages.clear();
+  for (const entry of (state.groupPages || [])) {
+    if (Array.isArray(entry) && entry.length === 2) {
+      groupPages.set(entry[0], entry[1]);
+    }
+  }
+
+  groupFilters.clear();
+  for (const entry of (state.groupFilters || [])) {
+    if (Array.isArray(entry) && entry.length === 2) {
+      groupFilters.set(entry[0], entry[1] || {});
+    }
+  }
+
+  outOfStockSectionHidden = !!state.outOfStockSectionHidden;
+  dismissedOutOfStockMonitorIds.clear();
+  for (const id of (state.dismissedOutOfStockMonitorIds || [])) {
+    if (id) dismissedOutOfStockMonitorIds.add(id);
+  }
+}
+
+function reconcileOutOfStockMonitorUpdates(previousMonitors = [], nextMonitors = []) {
+  const previousById = new Map(previousMonitors.map((monitor) => [monitor.id, monitor]));
+  let shouldOpenOutOfStock = false;
+
+  for (const monitor of nextMonitors) {
+    const previous = previousById.get(monitor.id);
+    const previousCheckedAt = previous?.lastCheckedAt || "";
+    const nextCheckedAt = monitor?.lastCheckedAt || "";
+    if (nextCheckedAt && nextCheckedAt !== previousCheckedAt && isMonitorFullyOutOfStock(monitor)) {
+      dismissedOutOfStockMonitorIds.delete(monitor.id);
+      shouldOpenOutOfStock = true;
+    }
+  }
+
+  if (shouldOpenOutOfStock) {
+    outOfStockSectionHidden = false;
+    collapsedGroups.delete(SHOPIFY_OOS_GROUP_KEY);
+  }
+}
+
+function applyMonitorsUpdate(nextMonitors = []) {
+  const previousMonitors = allMonitors;
+  reconcileOutOfStockMonitorUpdates(previousMonitors, nextMonitors);
+  allMonitors = nextMonitors;
 }
 
 function createStatCard(label, value, tone = "") {
   return `<article class="stat-card ${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></article>`;
 }
 
+function getProductPrimarySku(product) {
+  return normalizeSku(product?.sku) || [...getProductSkuSet(product)][0] || "";
+}
+
 function renderStats(monitors) {
   const changed = monitors.filter((m) => m.changeCount > 0).length;
   const errors = monitors.filter((m) => m.status === "error").length;
+  const dupeCount = (shopifyProductCount != null && shopifyUniqueSkuCount != null)
+    ? shopifyProductCount - shopifyUniqueSkuCount
+    : 0;
+  const shopifyCountLabel = shopifyProductCount == null ? "..." : shopifyProductCount;
+  const shopifySkuLabel = shopifyUniqueSkuCount == null ? "..." : shopifyUniqueSkuCount;
+  const shopifyProductsCard = shopifyProductCount == null
+    ? createStatCard("Shopify Products", "...")
+    : dupeCount > 0
+      ? `<article class="stat-card" title="${dupeCount} product${dupeCount !== 1 ? "s" : ""} share a SKU with another Shopify product (duplicates). The diff buttons compare by unique SKU."><span>Shopify Products</span><strong>${shopifyCountLabel}</strong><div style="font-size:11px;color:#ef4444;margin-top:2px">+${dupeCount} duplicate${dupeCount !== 1 ? "s" : ""}</div></article>`
+      : createStatCard("Shopify Products", shopifyCountLabel);
   const changedActionsHtml = changed > 0 ? `
     <div class="stat-card-actions">
       <button class="stat-action-btn" data-stat-action="filter-changed">Filter</button>
@@ -110,6 +268,8 @@ function renderStats(monitors) {
     </div>` : "";
   dashboardStats.innerHTML = [
     createStatCard("Monitors", monitors.length),
+    shopifyProductsCard,
+    createStatCard("Shopify Unique SKUs", shopifySkuLabel),
     `<article class="stat-card warm"><span>Changed</span><strong>${changed}</strong>${changedActionsHtml}</article>`,
     createStatCard("Errors", errors, errors ? "danger" : "")
   ].join("");
@@ -302,6 +462,7 @@ function renderSquare(monitor) {
   const num = allMonitors.findIndex((m) => m.id === monitor.id) + 1;
   const thumb = getMonitorThumb(monitor);
   const importedBadge = monitor.shopifyProductId ? `<span class="square-imported">Shopify</span>` : "";
+  const outOfStockBadge = isMonitorFullyOutOfStock(monitor) ? `<span class="square-oos">Out of stock</span>` : "";
 
   return `
     <article class="monitor-square${isActive ? " active" : ""}" data-id="${monitor.id}">
@@ -309,6 +470,7 @@ function renderSquare(monitor) {
       <input type="checkbox" class="square-check" data-id="${monitor.id}"${isChecked ? " checked" : ""} title="Select for bulk check">
       <div class="status-dot ${escapeHtml(monitor.status || "idle")}"></div>
       ${importedBadge}
+      ${outOfStockBadge}
       ${thumb ? `<div class="square-thumb-wrap"><img class="square-thumb" src="${escapeHtml(thumb)}" alt="${escapeHtml(monitor.productData?.name || monitor.name || "Product image")}"></div>` : ""}
       ${(() => {
         const pd = monitor.productData;
@@ -342,12 +504,15 @@ const SIZE_CHARTS = {
     Women: {"5":"36","5.5":"36 2/3","6":"37 1/3","6.5":"38","7":"38 2/3","7.5":"39 1/3","8":"40","8.5":"40 2/3","9":"41 1/3","9.5":"42","10":"42 2/3","10.5":"43 1/3","11":"44","11.5":"44 2/3","12":"45 1/3","12.5":"46","13":"46 2/3"}
   },
   Reebok: {
-    Men: {"4":"34.5","4.5":"35","5":"36","5.5":"36.5","6":"37.5","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"46","13":"47","14":"48.5"},
-    Women: {"6":"36","7":"37","8":"38","9":"39","9.5":"40","10.5":"41","11":"42","11.5":"42.5","12":"43","12.5":"44","13":"44.5","13.5":"45","14":"46","15":"47"}
+    Men: {"4":"34.5","4.5":"35","5":"36","5.5":"36.5","6":"37.5","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"45.5","12.5":"46","13":"47","13.5":"48","14":"48.5","15":"50","16":"52","17":"53.5","18":"55"},
+    Women: {"5.5":"34.5","6":"35","6.5":"36","7":"36.5","7.5":"37.5","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5","11.5":"43","12":"44"}
   },
   Puma: {
     Men: {"6":"38","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"46","12.5":"46.5","13":"47","14":"48.5","15":"49.5","16":"51"},
     Women: {"5.5":"35.5","6":"36","6.5":"37","7":"37.5","7.5":"38","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5"}
+  },
+  Converse: {
+    Men: {"6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"46","12":"46.5","13":"47.5","14":"49","15":"50","16":"51.5"}
   }
 };
 
@@ -360,6 +525,7 @@ function getEuSize(usSize, brand, gender) {
   else if (/adidas/i.test(b)) chartBrand = "Adidas";
   else if (/reebok/i.test(b)) chartBrand = "Reebok";
   else if (/puma/i.test(b)) chartBrand = "Puma";
+  else if (/converse/i.test(b)) chartBrand = "Converse";
   if (!chartBrand) return null;
   const chartGender = /women|girl|female/i.test(String(gender || "")) ? "Women" : "Men";
   const chart = SIZE_CHARTS[chartBrand]?.[chartGender];
@@ -625,8 +791,6 @@ function renderGrid(monitors) {
   const HOURS_48 = 48 * 60 * 60 * 1000;
   const NEW_GROUP_KEY = "__new48h__";
   const ERROR_GROUP_KEY = "__errors__";
-  const SHOPIFY_OOS_GROUP_KEY = "__shopify_oos__";
-
   // Apply group-level brand/type filter then paginate
   function applyGroupFilter(key, mons) {
     const f = groupFilters.get(key) || {};
@@ -690,7 +854,7 @@ function renderGrid(monitors) {
 
   const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
   const errorMons = monitors.filter((m) => m.status === "error");
-  const outOfStockIdSet = getCombinedOutOfStockMonitorIds(monitors);
+  const outOfStockIdSet = getVisibleOutOfStockMonitorIds(monitors);
   const shopifyOutOfStockMons = [...outOfStockIdSet].map((id) => monitors.find((m) => m.id === id)).filter(Boolean);
   const selectedNewMons = newMons.filter((m) => checkedIds.has(m.id));
   const selectedShopifyOutOfStockMons = shopifyOutOfStockMons.filter((m) => checkedIds.has(m.id));
@@ -701,6 +865,7 @@ function renderGrid(monitors) {
         `<span class="site-group-title new-group-title">New · last 48h</span>`,
         newMons,
         `<div class="site-group-actions">
+          <button class="site-select-btn inline-button" data-ids="${escapeHtml(newMons.map((m) => m.id).join(","))}">${selectedNewMons.length === newMons.length && newMons.length ? "Deselect shown" : "Select shown"}</button>
           <button class="site-clear-selected-btn inline-button" data-ids="${escapeHtml(selectedNewMons.map((m) => m.id).join(","))}" ${selectedNewMons.length ? "" : "disabled"}>Clear selected</button>
           <button class="site-clear-btn inline-button danger" data-ids="${escapeHtml(newMons.map((m) => m.id).join(","))}">Clear</button>
         </div>`
@@ -717,8 +882,8 @@ function renderGrid(monitors) {
         `<span class="site-group-title error-group-title">Out of stock</span>`,
         shopifyOutOfStockMons,
         `<div class="site-group-actions">
-          <button class="site-select-btn inline-button" data-ids="${escapeHtml(shopifyOutOfStockMons.map((m) => m.id).join(","))}">${selectedShopifyOutOfStockMons.length === shopifyOutOfStockMons.length && shopifyOutOfStockMons.length ? "Deselect shown" : "Select shown"}</button>
-          <button class="shopify-oos-clear-btn inline-button">Hide</button>
+          <button class="site-select-btn inline-button" data-ids="${escapeHtml(shopifyOutOfStockMons.map((m) => m.id).join(","))}">${selectedShopifyOutOfStockMons.length === shopifyOutOfStockMons.length && shopifyOutOfStockMons.length ? "Deselect all out of stock" : "Select all out of stock"}</button>
+          <button class="shopify-oos-clear-btn inline-button">Clear</button>
         </div>`
       )
     : "";
@@ -745,14 +910,19 @@ function renderGrid(monitors) {
 
 function updateBulkBtn() {
   const n = checkedIds.size;
-  bulkCheckBtn.disabled = n === 0 || !canCheck;
-  bulkDeleteBtn.disabled = n === 0;
-  bulkDeleteShopifyBtn.disabled = n === 0;
-  bulkImportBtn.disabled = n === 0;
+  bulkCheckBtn.disabled = n === 0 || !canCheck || importInProgress;
+  bulkDeleteBtn.disabled = n === 0 || importInProgress;
+  bulkDeleteShopifyBtn.disabled = n === 0 || importInProgress;
+  bulkImportBtn.disabled = n === 0 || importInProgress;
   bulkCheckBtn.textContent = n > 0 ? `Check selected (${n})` : "Check selected";
   bulkDeleteBtn.textContent = n > 0 ? `Delete selected (${n})` : "Delete selected";
   bulkDeleteShopifyBtn.textContent = n > 0 ? `Delete from Shopify + Monitors (${n})` : "Delete from Shopify + Monitors";
-  bulkImportBtn.textContent = n > 0 ? `Import to Shopify (${n})` : "Import to Shopify";
+  if (!importInProgress) {
+    bulkImportBtn.textContent = n > 0 ? `Import to Shopify (${n})` : "Import to Shopify";
+    stopImportBtn.textContent = "Stop Import";
+  }
+  stopImportBtn.style.display = importInProgress ? "" : "none";
+  stopImportBtn.disabled = !importInProgress;
   const bulkIntervalRow = document.getElementById("bulk-interval-row");
   if (bulkIntervalRow) bulkIntervalRow.style.display = n > 0 ? "" : "none";
   selectAllBtn.style.display = "";
@@ -780,19 +950,21 @@ async function runButtonProgress(button, items, action, worker) {
 
 function renderAll() {
   const currentOutOfStockSignature = getOutOfStockSignature(allMonitors);
+  const currentOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
+  [...dismissedOutOfStockMonitorIds].forEach((id) => {
+    if (!currentOutOfStockIds.has(id)) dismissedOutOfStockMonitorIds.delete(id);
+  });
   if (currentOutOfStockSignature !== lastOutOfStockSignature) {
     outOfStockSectionHidden = false;
+    if (currentOutOfStockSignature) {
+      collapsedGroups.delete(SHOPIFY_OOS_GROUP_KEY);
+    }
     lastOutOfStockSignature = currentOutOfStockSignature;
   }
   renderStats(allMonitors);
   populateFilterOptions();
   renderGrid(getFilteredMonitors());
-  if (!openShopifyOutOfStockBtn.disabled) {
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : "Out of stock";
-  }
+  updateOutOfStockButtons();
 
   if (selectedMonitorId) {
     const m = allMonitors.find((x) => x.id === selectedMonitorId);
@@ -801,6 +973,7 @@ function renderAll() {
   }
 
   updateBulkBtn();
+  scheduleSaveDashboardUiState();
 }
 
 async function loadDashboard() {
@@ -812,24 +985,67 @@ async function loadDashboard() {
     return;
   }
 
-  allMonitors = response.monitors || [];
+  applyMonitorsUpdate(response.monitors || []);
 
   if (!allMonitors.length) {
     renderStats([]);
     monitorGrid.innerHTML = `<section class="empty-state large" style="grid-column:1/-1"><p>No monitors yet.</p><p class="subtle">Use the extension popup to create one.</p></section>`;
     monitorDetail.style.display = "none";
+    refreshShopifyDashboardState().catch(() => {});
     return;
   }
 
   renderAll();
+  refreshShopifyDashboardState().catch(() => {});
 }
 
 // Refresh data and re-render without the loading spinner flash.
 async function silentRefresh() {
   const response = await chrome.runtime.sendMessage({ type: "get-monitors" });
   if (!response?.ok) return;
-  allMonitors = response.monitors || [];
+  applyMonitorsUpdate(response.monitors || []);
   renderAll();
+  refreshShopifyDashboardState().catch(() => {});
+}
+
+async function refreshShopifyProductCount(forceRefresh = false) {
+  if (!await isConnected()) {
+    shopifyProductCount = null;
+    shopifyUniqueSkuCount = null;
+    renderStats(allMonitors);
+    return;
+  }
+  try {
+    if (forceRefresh) clearShopifyProductsSnapshotCache();
+    const products = await getShopifyProductsSnapshot();
+    shopifyProductCount = products.length;
+    const uniqueSkus = new Set(products.map((product) => getProductPrimarySku(product)).filter(Boolean));
+    shopifyUniqueSkuCount = uniqueSkus.size;
+  } catch (_) {
+    shopifyProductCount = null;
+    shopifyUniqueSkuCount = null;
+  }
+  renderStats(allMonitors);
+}
+
+async function refreshOpenShopifyPanels(forceRefresh = false) {
+  if (shopifyUnmonitoredPanel.style.display !== "none") {
+    await loadShopifyUnmonitoredProducts(forceRefresh);
+  }
+  if (monitorNotShopifyPanel.style.display !== "none") {
+    await loadMonitorNotShopifyMonitors(forceRefresh);
+  }
+  if (skuDuplicatesPanel.style.display !== "none") {
+    await loadDuplicateSkuProducts(forceRefresh);
+  }
+  if (metaSection.style.display !== "none" && (forceRefresh || !metaContent.innerHTML.trim())) {
+    await fetchAndShowMeta();
+  }
+}
+
+async function refreshShopifyDashboardState(forceRefresh = false) {
+  await refreshShopifyProductCount(forceRefresh);
+  await refreshOpenShopifyPanels(forceRefresh);
 }
 
 function addSelectorChip(list, value) {
@@ -897,11 +1113,9 @@ monitorGrid.addEventListener("click", async (event) => {
   }
 
   if (target.classList.contains("shopify-oos-clear-btn")) {
-    outOfStockSectionHidden = true;
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : "Out of stock";
+    getVisibleOutOfStockMonitorIds(allMonitors).forEach((id) => dismissedOutOfStockMonitorIds.add(id));
+    outOfStockSectionHidden = false;
+    updateOutOfStockButtons();
     renderGrid(getFilteredMonitors());
     return;
   }
@@ -1199,40 +1413,56 @@ bulkImportBtn.addEventListener("click", async () => {
   if (!await isConnected()) { alert("Connect to Shopify first (see top of page)."); return; }
 
   const toImport = allMonitors.filter(m => checkedIds.has(m.id));
+  importInProgress = true;
+  stopImportRequested = false;
   bulkImportBtn.disabled = true;
+  bulkDeleteBtn.disabled = true;
+  bulkDeleteShopifyBtn.disabled = true;
+  bulkCheckBtn.disabled = true;
+  stopImportBtn.textContent = "Stop Import";
+  stopImportBtn.disabled = false;
   setProgressLabel(bulkImportBtn, "Importing", 0, n);
+  updateBulkBtn();
 
   const succeeded = [];
   const failed = [];
+  let processed = 0;
 
+  try {
+    await primeImportCaches();
+  } catch (_) {}
+
+  const importContext = {};
   for (let i = 0; i < toImport.length; i++) {
+    if (stopImportRequested) break;
     const monitor = toImport[i];
-    setProgressLabel(bulkImportBtn, "Importing", i + 1, n);
     try {
       if (monitor.shopifyProductId) {
         throw new Error("Already imported to Shopify; this monitor is kept for ongoing sync.");
       }
-      const created = await importMonitorProduct(monitor);
-      await chrome.runtime.sendMessage({
-        type: "update-monitor",
-        payload: {
-          id: monitor.id,
-          shopifyProductId: created.id,
-          shopifyImportedAt: new Date().toISOString(),
-          shopifyLastSyncAt: new Date().toISOString(),
-          shopifySyncStatus: "ok"
-        }
-      });
+      const created = await importMonitorProduct(monitor, importContext);
+      await Promise.all([
+        chrome.runtime.sendMessage({
+          type: "update-monitor",
+          payload: {
+            id: monitor.id,
+            shopifyProductId: created.id,
+            shopifyImportedAt: new Date().toISOString(),
+            shopifyLastSyncAt: new Date().toISOString(),
+            shopifySyncStatus: "ok"
+          }
+        }),
+        addLog({
+          type: "import",
+          title: [monitor.productData?.brand, monitor.productData?.sku].filter(Boolean).join(" ") || monitor.name,
+          productName: monitor.productData?.name || monitor.name || "",
+          brand: monitor.productData?.brand || "",
+          sku: monitor.productData?.sku || "",
+          details: ["Imported to Shopify", "Monitor kept for ongoing price/size sync"],
+          monitorId: monitor.id, url: monitor.url
+        }).catch(() => {})
+      ]);
       succeeded.push(monitor.id);
-      const pd = monitor.productData || {};
-      await addLog({
-        type: "import",
-        title: [pd.brand, pd.sku].filter(Boolean).join(" ") || monitor.name,
-        productName: pd.name || monitor.name || "",
-        brand: pd.brand || "", sku: pd.sku || "",
-        details: ["Imported to Shopify", "Monitor kept for ongoing price/size sync"],
-        monitorId: monitor.id, url: monitor.url
-      }).catch(() => {});
     } catch (e) {
       // Parse Shopify error body if JSON
       let reason = e.message || "Unknown error";
@@ -1258,22 +1488,36 @@ bulkImportBtn.addEventListener("click", async () => {
         url: monitor.url
       }).catch(() => {});
       failed.push({ name: monitor.name, url: monitor.url, reason });
+    } finally {
+      processed++;
+      setProgressLabel(bulkImportBtn, "Importing", processed, n);
     }
   }
 
   // Only delete successfully imported monitors — failed ones stay
   succeeded.forEach(id => checkedIds.delete(id));
 
+  importInProgress = false;
+  stopImportRequested = false;
   await loadDashboard();
   await refreshUndoImportBtn();
+  updateBulkBtn();
 
-  if (failed.length && succeeded.length) {
+  if (processed < n) {
+    alert(`Stopped after ${processed}/${n} imports.\n\nImported: ${succeeded.length}\nFailed: ${failed.length}`);
+  } else if (failed.length && succeeded.length) {
     alert(`✓ Imported ${succeeded.length} / ${n}.\n\nImported monitors were kept for ongoing Shopify sync.\n\n❌ Failed (${failed.length}):\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
   } else if (failed.length) {
     alert(`❌ All ${n} imports failed:\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
   } else {
     alert(`✓ Imported ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""} to Shopify as active products. Monitors were kept for ongoing sync.`);
   }
+});
+
+stopImportBtn.addEventListener("click", () => {
+  stopImportRequested = true;
+  stopImportBtn.disabled = true;
+  stopImportBtn.textContent = "Stopping…";
 });
 
 bulkDeleteBtn.addEventListener("click", async () => {
@@ -1402,14 +1646,34 @@ function applyFilters() {
   filterType.classList.toggle("active", !!filterType.value);
 }
 
-searchInput.addEventListener("input", applyFilters);
-changedOnlyInput.addEventListener("change", applyFilters);
-filterBrand.addEventListener("change", applyFilters);
-filterType.addEventListener("change", applyFilters);
-filterSort.addEventListener("change", applyFilters);
+searchInput.addEventListener("input", () => { applyFilters(); scheduleSaveDashboardUiState(); });
+changedOnlyInput.addEventListener("change", () => { applyFilters(); scheduleSaveDashboardUiState(); });
+filterBrand.addEventListener("change", () => { applyFilters(); scheduleSaveDashboardUiState(); });
+filterType.addEventListener("change", () => { applyFilters(); scheduleSaveDashboardUiState(); });
+filterSort.addEventListener("change", () => { applyFilters(); scheduleSaveDashboardUiState(); });
 document.getElementById("refresh-dashboard").addEventListener("click", loadDashboard);
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local" || !changes.pageMonitors) return;
+  clearTimeout(dashboardStorageRefreshTimer);
+  dashboardStorageRefreshTimer = setTimeout(() => {
+    const nextMonitors = changes.pageMonitors?.newValue || [];
+    applyMonitorsUpdate(nextMonitors);
+    if (!allMonitors.length) {
+      renderStats([]);
+      monitorGrid.innerHTML = `<section class="empty-state large" style="grid-column:1/-1"><p>No monitors yet.</p><p class="subtle">Use the extension popup to create one.</p></section>`;
+      monitorDetail.style.display = "none";
+      updateBulkBtn();
+      refreshShopifyDashboardState().catch(() => {});
+      return;
+    }
+    renderAll();
+    refreshOpenShopifyPanels().catch(() => {});
+  }, 100);
+});
 
+await restoreDashboardUiState();
+chrome.runtime.sendMessage({ type: "normalize-monitor-brands" }).catch(() => {});
 loadDashboard();
 refreshUndoCount();
 
@@ -1499,6 +1763,7 @@ async function refreshShopifyUI(runVerify = false) {
     shopifyDisconnectBtn.style.display = "none";
   }
   shopifyError.style.display = "none";
+  refreshShopifyDashboardState().catch(() => {});
 }
 
 shopifyConnectBtn.addEventListener("click", async () => {
@@ -1604,6 +1869,82 @@ function getMonitorSkuSet() {
   );
 }
 
+function getMonitorShopifyProductIdSet() {
+  return new Set(
+    allMonitors
+      .map((monitor) => Number(monitor.shopifyProductId))
+      .filter(Boolean)
+  );
+}
+
+function getShopifySkuSet(products) {
+  const skus = new Set();
+  for (const product of products || []) {
+    for (const sku of getProductSkuSet(product)) {
+      skus.add(sku);
+    }
+  }
+  return skus;
+}
+
+function getShopifyUnmonitoredStatusText() {
+  const dupeCount = (shopifyProductCount != null && shopifyUniqueSkuCount != null)
+    ? shopifyProductCount - shopifyUniqueSkuCount
+    : 0;
+  const base = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available on Shopify but not on monitor.`;
+  if (shopifyUnmonitoredProducts.length === 0 && dupeCount > 0) {
+    return `${base} All unique Shopify SKUs are monitored. The ${dupeCount}-product gap in the dashboard is from ${dupeCount} duplicate-SKU product${dupeCount !== 1 ? "s" : ""} in Shopify.`;
+  }
+  return base;
+}
+
+function getMonitorNotShopifyStatusText() {
+  const dupeCount = (shopifyProductCount != null && shopifyUniqueSkuCount != null)
+    ? shopifyProductCount - shopifyUniqueSkuCount
+    : 0;
+  const base = `${monitorNotShopifyMonitors.length} monitor${monitorNotShopifyMonitors.length !== 1 ? "s" : ""} available on monitor but not on Shopify.`;
+  if (monitorNotShopifyMonitors.length === 0 && dupeCount > 0) {
+    return `${base} All monitors have a matching Shopify product. The ${dupeCount}-product gap in the dashboard is from ${dupeCount} duplicate-SKU product${dupeCount !== 1 ? "s" : ""} in Shopify.`;
+  }
+  return base;
+}
+
+function computeShopifyMonitorDiffs(products, monitors) {
+  const monitorSkuSet = new Set(
+    (monitors || [])
+      .map((monitor) => normalizeSku(monitor?.productData?.sku))
+      .filter(Boolean)
+  );
+
+  const shopifySkuSet = new Set();
+  const shopifyOnlyProducts = [];
+  for (const product of (products || [])) {
+    const skuSet = getProductSkuSet(product);
+    const matchingSku = [...skuSet].find((sku) => monitorSkuSet.has(sku));
+    if (matchingSku) {
+      skuSet.forEach((sku) => shopifySkuSet.add(sku));
+      continue;
+    }
+
+    const productSku = normalizeSku(product?.sku) || [...skuSet][0] || "";
+    if (!productSku) continue;
+    if (shopifySkuSet.has(productSku)) continue;
+    shopifySkuSet.add(productSku);
+    shopifyOnlyProducts.push(product);
+  }
+
+  const monitorOnlyMonitors = [];
+  const seenMonitorSkus = new Set();
+  for (const monitor of (monitors || [])) {
+    const sku = normalizeSku(monitor?.productData?.sku);
+    if (!sku || shopifySkuSet.has(sku) || seenMonitorSkus.has(sku)) continue;
+    seenMonitorSkus.add(sku);
+    monitorOnlyMonitors.push(monitor);
+  }
+
+  return { shopifyOnlyProducts, monitorOnlyMonitors };
+}
+
 function renderShopifyUnmonitoredList() {
   if (!shopifyUnmonitoredProducts.length) {
     shopifyUnmonitoredList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No Shopify-only products found.</p>`;
@@ -1638,11 +1979,13 @@ async function loadShopifyUnmonitoredProducts(forceRefresh = false) {
   shopifyUnmonitoredRefreshBtn.disabled = true;
   try {
     if (forceRefresh) clearShopifyProductsSnapshotCache();
-    const monitorSkuSet = getMonitorSkuSet();
     const products = await getShopifyProductsSnapshot();
-    shopifyUnmonitoredProducts = products.filter((product) => !monitorSkuSet.has(normalizeSku(product.sku)));
+    shopifyProductCount = products.length;
+    shopifyUniqueSkuCount = new Set(products.map(getProductPrimarySku).filter(Boolean)).size;
+    const diffs = computeShopifyMonitorDiffs(products, allMonitors);
+    shopifyUnmonitoredProducts = diffs.shopifyOnlyProducts;
     selectedShopifyUnmonitoredIds.clear();
-    shopifyUnmonitoredStatus.textContent = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available but not monitored.`;
+    shopifyUnmonitoredStatus.textContent = getShopifyUnmonitoredStatusText();
     renderShopifyUnmonitoredList();
   } catch (error) {
     shopifyUnmonitoredStatus.textContent = `Error: ${error.message || error}`;
@@ -1653,13 +1996,61 @@ async function loadShopifyUnmonitoredProducts(forceRefresh = false) {
   shopifyUnmonitoredRefreshBtn.disabled = false;
 }
 
+function renderMonitorNotShopifyList() {
+  if (!monitorNotShopifyMonitors.length) {
+    monitorNotShopifyList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No monitor-only items found.</p>`;
+    monitorNotShopifyClearSelectedBtn.disabled = true;
+    return;
+  }
+  monitorNotShopifyList.innerHTML = monitorNotShopifyMonitors.map((monitor) => {
+    const sku = monitor.productData?.sku || "No SKU";
+    const title = monitor.productData?.name || monitor.name || "";
+    return `
+      <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 16px;border-bottom:1px solid #f3f4f6;cursor:pointer">
+        <input type="checkbox" class="monitor-not-shopify-check" data-id="${escapeHtml(String(monitor.id))}" ${selectedMonitorNotShopifyIds.has(String(monitor.id)) ? "checked" : ""}>
+        <div style="min-width:0;flex:1">
+          <p style="margin:0;font-size:12px;font-weight:700;color:#111">${escapeHtml(sku)}</p>
+          ${title ? `<p style="margin:2px 0 0;font-size:12px;color:#5f6c7b">${escapeHtml(title)}</p>` : ""}
+        </div>
+      </label>
+    `;
+  }).join("");
+  monitorNotShopifyClearSelectedBtn.disabled = selectedMonitorNotShopifyIds.size === 0;
+}
+
+async function loadMonitorNotShopifyMonitors(forceRefresh = false) {
+  if (!await isConnected()) {
+    monitorNotShopifyStatus.textContent = "Connect Shopify first.";
+    monitorNotShopifyMonitors = [];
+    selectedMonitorNotShopifyIds.clear();
+    renderMonitorNotShopifyList();
+    return;
+  }
+  monitorNotShopifyStatus.textContent = "Loading monitor comparison…";
+  monitorNotShopifyRefreshBtn.disabled = true;
+  try {
+    if (forceRefresh) clearShopifyProductsSnapshotCache();
+    const products = await getShopifyProductsSnapshot();
+    shopifyProductCount = products.length;
+    shopifyUniqueSkuCount = new Set(products.map(getProductPrimarySku).filter(Boolean)).size;
+    const diffs = computeShopifyMonitorDiffs(products, allMonitors);
+    monitorNotShopifyMonitors = diffs.monitorOnlyMonitors;
+    selectedMonitorNotShopifyIds.clear();
+    monitorNotShopifyStatus.textContent = getMonitorNotShopifyStatusText();
+    renderMonitorNotShopifyList();
+  } catch (error) {
+    monitorNotShopifyStatus.textContent = `Error: ${error.message || error}`;
+    monitorNotShopifyMonitors = [];
+    selectedMonitorNotShopifyIds.clear();
+    renderMonitorNotShopifyList();
+  }
+  monitorNotShopifyRefreshBtn.disabled = false;
+}
+
 async function loadShopifyOutOfStockMonitors(forceRefresh = false) {
   if (!await isConnected()) {
     shopifyOutOfStockMonitorIds = null;
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : "Out of stock";
+    updateOutOfStockButtons();
     renderGrid(getFilteredMonitors());
     window.alert("Connect Shopify first.");
     return;
@@ -1668,22 +2059,19 @@ async function loadShopifyOutOfStockMonitors(forceRefresh = false) {
   const linkedMonitors = allMonitors.filter((monitor) => monitor.shopifyProductId);
   if (!linkedMonitors.length) {
     shopifyOutOfStockMonitorIds = new Set();
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : "Out of stock";
+    updateOutOfStockButtons();
     renderGrid(getFilteredMonitors());
     return;
   }
 
-  const originalText = "Out of stock";
-  openShopifyOutOfStockBtn.disabled = true;
+  const originalText = checkShopifyOutOfStockBtn.textContent;
+  checkShopifyOutOfStockBtn.disabled = true;
   try {
     const productIds = [...new Set(linkedMonitors.map((monitor) => Number(monitor.shopifyProductId)).filter(Boolean))];
     if (forceRefresh) clearShopifyProductsSnapshotCache();
-    setProgressLabel(openShopifyOutOfStockBtn, "Checking", 0, productIds.length);
+    setProgressLabel(checkShopifyOutOfStockBtn, "Checking", 0, productIds.length);
     const outOfStockProductIds = await getFullyOutOfStockProductIds(productIds, (current, total) => {
-      setProgressLabel(openShopifyOutOfStockBtn, "Checking", current, total);
+      setProgressLabel(checkShopifyOutOfStockBtn, "Checking", current, total);
     });
     const outOfStockIdSet = new Set(outOfStockProductIds.map((id) => Number(id)));
     shopifyOutOfStockMonitorIds = new Set(
@@ -1691,27 +2079,17 @@ async function loadShopifyOutOfStockMonitors(forceRefresh = false) {
         .filter((monitor) => outOfStockIdSet.has(Number(monitor.shopifyProductId)))
         .map((monitor) => monitor.id)
     );
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : "Out of stock";
+    updateOutOfStockButtons();
     renderGrid(getFilteredMonitors());
   } catch (error) {
     shopifyOutOfStockMonitorIds = null;
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : originalText;
+    updateOutOfStockButtons();
     renderGrid(getFilteredMonitors());
     window.alert(`Failed to load Shopify out-of-stock monitors: ${error.message || error}`);
   } finally {
-    if (!shopifyOutOfStockMonitorIds) {
-      const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-      openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-        ? `Out of stock (${combinedOutOfStockIds.size})`
-        : originalText;
-    }
-    openShopifyOutOfStockBtn.disabled = false;
+    checkShopifyOutOfStockBtn.textContent = originalText;
+    checkShopifyOutOfStockBtn.disabled = false;
+    updateOutOfStockButtons();
   }
 }
 
@@ -1741,7 +2119,7 @@ async function clearSelectedShopifyUnmonitoredList() {
       selectedShopifyUnmonitoredIds.delete(id);
       renderShopifyUnmonitoredList();
     });
-    shopifyUnmonitoredStatus.textContent = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available but not monitored.`;
+    shopifyUnmonitoredStatus.textContent = getShopifyUnmonitoredStatusText();
   } finally {
     shopifyUnmonitoredClearSelectedBtn.textContent = originalText;
   }
@@ -1756,9 +2134,313 @@ async function deleteShopifyUnmonitored(ids, onProgress = null) {
   }
   shopifyUnmonitoredProducts = shopifyUnmonitoredProducts.filter((item) => !productIds.includes(Number(item.id)));
   productIds.forEach((id) => selectedShopifyUnmonitoredIds.delete(String(id)));
-  shopifyUnmonitoredStatus.textContent = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available but not monitored.`;
+  shopifyUnmonitoredStatus.textContent = getShopifyUnmonitoredStatusText();
   renderShopifyUnmonitoredList();
+  await refreshShopifyDashboardState(true);
 }
+
+async function clearMonitorNotShopifyList() {
+  const ids = monitorNotShopifyMonitors.map((monitor) => String(monitor.id));
+  if (!ids.length) return;
+  const originalText = monitorNotShopifyClearBtn.textContent;
+  try {
+    await runButtonProgress(monitorNotShopifyClearBtn, ids, "Clearing", async (id) => {
+      monitorNotShopifyMonitors = monitorNotShopifyMonitors.filter((monitor) => String(monitor.id) !== id);
+      selectedMonitorNotShopifyIds.delete(id);
+      renderMonitorNotShopifyList();
+    });
+    monitorNotShopifyStatus.textContent = "List cleared.";
+  } finally {
+    monitorNotShopifyClearBtn.textContent = originalText;
+  }
+}
+
+async function clearSelectedMonitorNotShopifyList() {
+  const ids = new Set([...selectedMonitorNotShopifyIds]);
+  if (!ids.size) return;
+  const originalText = monitorNotShopifyClearSelectedBtn.textContent;
+  try {
+    await runButtonProgress(monitorNotShopifyClearSelectedBtn, [...ids], "Clearing", async (id) => {
+      monitorNotShopifyMonitors = monitorNotShopifyMonitors.filter((monitor) => String(monitor.id) !== id);
+      selectedMonitorNotShopifyIds.delete(id);
+      renderMonitorNotShopifyList();
+    });
+    monitorNotShopifyStatus.textContent = getMonitorNotShopifyStatusText();
+  } finally {
+    monitorNotShopifyClearSelectedBtn.textContent = originalText;
+  }
+}
+
+// ── Duplicate SKU cleanup panel ────────────────────────────────────────────
+
+function computeDuplicateSkuGroups(products, skuMapping, monitors) {
+  // Source of truth priority (mirrors shopify.js updateShopifyForMonitor line 647):
+  //   1. monitor.shopifyProductId  — the product a monitor directly pushes updates to
+  //   2. skuMapping[baseSku]       — fallback used when no monitor ID is set
+  //   3. lowest product ID         — oldest product, last resort
+  // A product is only safe to delete when it appears in NONE of the above for its SKU.
+
+  const monitorReferencedIds = new Set(
+    (monitors || []).map((m) => Number(m.shopifyProductId)).filter(Boolean)
+  );
+  const mappedIds = new Set(Object.values(skuMapping).map(Number));
+
+  // Build a per-SKU map: sku → Set of product IDs that are protected (monitor or mapping)
+  const skuProtectedIds = new Map();
+  for (const m of (monitors || [])) {
+    const sku = normalizeSku(m.productData?.sku);
+    const id = Number(m.shopifyProductId);
+    if (sku && id) {
+      if (!skuProtectedIds.has(sku)) skuProtectedIds.set(sku, new Set());
+      skuProtectedIds.get(sku).add(id);
+    }
+  }
+  for (const [sku, id] of Object.entries(skuMapping)) {
+    const nid = Number(id);
+    if (sku && nid) {
+      if (!skuProtectedIds.has(sku)) skuProtectedIds.set(sku, new Set());
+      skuProtectedIds.get(sku).add(nid);
+    }
+  }
+
+  const bySkuMap = new Map();
+  for (const product of products) {
+    const sku = getProductPrimarySku(product);
+    if (!sku) continue;
+    if (!bySkuMap.has(sku)) bySkuMap.set(sku, []);
+    bySkuMap.get(sku).push(product);
+  }
+
+  const groups = [];
+  for (const [sku, group] of bySkuMap) {
+    if (group.length < 2) continue;
+
+    const protected_ = skuProtectedIds.get(sku) || new Set();
+
+    // Priority 1: monitor-referenced product
+    const monitorReferenced = group.find((p) => monitorReferencedIds.has(Number(p.id)));
+    // Priority 2: mapping product (only if no monitor reference exists)
+    const mapped = !monitorReferenced && group.find((p) => mappedIds.has(Number(p.id)));
+    // Priority 3: oldest (lowest Shopify ID)
+    const oldest = group.reduce((a, b) => Number(a.id) < Number(b.id) ? a : b);
+
+    const keepProduct = monitorReferenced || mapped || oldest;
+    const keepReason = monitorReferenced ? "monitor" : mapped ? "mapping" : "oldest";
+
+    // A product is only safe to delete when it is not protected by ANY reference for this SKU.
+    // This is stricter than just checking monitorReferencedIds — it also covers the mapping.
+    const safeExtras = group.filter(
+      (p) => p.id !== keepProduct.id && !protected_.has(Number(p.id))
+    );
+
+    // Skip groups where nothing can be safely deleted
+    if (safeExtras.length === 0) continue;
+
+    groups.push({ sku, keepProduct, keepReason, extraProducts: safeExtras });
+  }
+  groups.sort((a, b) => a.sku.localeCompare(b.sku));
+  return groups;
+}
+
+function renderDuplicateSkuPanel() {
+  const totalExtras = skuDuplicateGroups.reduce((n, g) => n + g.extraProducts.length, 0);
+  skuDuplicatesDeleteBtn.disabled = selectedDuplicateIds.size === 0;
+  skuDuplicatesSelectAllBtn.disabled = totalExtras === 0;
+  skuDuplicatesDeselectBtn.disabled = selectedDuplicateIds.size === 0;
+
+  if (!skuDuplicateGroups.length) {
+    skuDuplicatesList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No duplicate SKUs found.</p>`;
+    return;
+  }
+
+  const keepReasonLabel = { monitor: "used by monitor", mapping: "in SKU mapping", oldest: "oldest product" };
+
+  function productInfoHtml(p) {
+    const thumb = p.image
+      ? `<img src="${escapeHtml(p.image)}" alt="" style="width:48px;height:48px;object-fit:cover;border-radius:4px;flex-shrink:0;border:1px solid #e5e7eb">`
+      : `<div style="width:48px;height:48px;border-radius:4px;flex-shrink:0;background:#f3f4f6;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:18px;color:#d1d5db">□</div>`;
+    const adminUrl = skuDuplicatesAdminBase ? `${skuDuplicatesAdminBase}/${p.id}` : "";
+    return `
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+        ${thumb}
+        <div style="min-width:0;flex:1">
+          <p style="margin:0;font-size:12px;font-weight:700;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.title || "(no title)")}</p>
+          <p style="margin:3px 0 0;font-size:11px;color:#5f6c7b">Supplier SKU: <strong>${escapeHtml(p.sku || "—")}</strong></p>
+          <p style="margin:2px 0 0;font-size:11px;color:#9ca3af">
+            Shopify ID: ${p.id}${adminUrl ? `&ensp;<a href="${adminUrl}" target="_blank" style="color:#5c6ac4;text-decoration:none">View ↗</a>` : ""}
+          </p>
+        </div>
+      </div>`;
+  }
+
+  skuDuplicatesList.innerHTML = skuDuplicateGroups.map(({ sku, keepProduct, keepReason, extraProducts }) => {
+    const keepHtml = `
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#f0fdf4;border-bottom:1px solid #bbf7d0">
+        <span style="flex-shrink:0;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:#16a34a;color:#fff;white-space:nowrap">KEEP · ${escapeHtml(keepReasonLabel[keepReason] || keepReason)}</span>
+        ${productInfoHtml(keepProduct)}
+      </div>`;
+    const extrasHtml = extraProducts.map((p) => {
+      const idStr = String(p.id);
+      const checked = selectedDuplicateIds.has(idStr) ? "checked" : "";
+      return `
+        <label style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff5f5;border-bottom:1px solid #fecaca;cursor:pointer">
+          <input type="checkbox" class="sku-dup-check" data-id="${idStr}" ${checked} style="flex-shrink:0">
+          <span style="flex-shrink:0;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:#dc2626;color:#fff;white-space:nowrap">DELETE</span>
+          ${productInfoHtml(p)}
+        </label>`;
+    }).join("");
+    return `
+      <div style="border-bottom:2px solid var(--border)">
+        <div style="padding:8px 16px;background:#f8fafc;border-bottom:1px solid var(--border)">
+          <span style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:0.05em">SKU: ${escapeHtml(sku)}</span>
+          <span style="margin-left:8px;font-size:11px;color:#9ca3af">${extraProducts.length + 1} product${extraProducts.length + 1 !== 1 ? "s" : ""} — ${extraProducts.length} safe to delete</span>
+        </div>
+        ${keepHtml}${extrasHtml}
+      </div>`;
+  }).join("");
+
+  skuDuplicatesList.querySelectorAll(".sku-dup-check").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      if (cb.checked) selectedDuplicateIds.add(cb.dataset.id);
+      else selectedDuplicateIds.delete(cb.dataset.id);
+      skuDuplicatesDeleteBtn.disabled = selectedDuplicateIds.size === 0;
+      skuDuplicatesDeselectBtn.disabled = selectedDuplicateIds.size === 0;
+    });
+  });
+}
+
+async function loadDuplicateSkuProducts(forceRefresh = false) {
+  if (!await isConnected()) {
+    skuDuplicatesStatus.textContent = "Connect Shopify first.";
+    skuDuplicateGroups = [];
+    selectedDuplicateIds.clear();
+    renderDuplicateSkuPanel();
+    return;
+  }
+  skuDuplicatesStatus.textContent = "Loading Shopify products…";
+  skuDuplicatesRefreshBtn.disabled = true;
+  try {
+    if (forceRefresh) clearShopifyProductsSnapshotCache();
+    const products = await getShopifyProductsSnapshot();
+    shopifyProductCount = products.length;
+    shopifyUniqueSkuCount = new Set(products.map(getProductPrimarySku).filter(Boolean)).size;
+    const { shopifySkuMapping, SHOPIFY_SHOP } = await chrome.storage.local.get(["shopifySkuMapping", "SHOPIFY_SHOP"]);
+    const shopDomain = SHOPIFY_SHOP || "orjn.myshopify.com";
+    const storeName = shopDomain.replace(".myshopify.com", "");
+    skuDuplicatesAdminBase = `https://admin.shopify.com/store/${storeName}/products`;
+    skuDuplicateGroups = computeDuplicateSkuGroups(products, shopifySkuMapping || {}, allMonitors);
+    selectedDuplicateIds.clear();
+    // Auto-select all extras by default
+    for (const { extraProducts } of skuDuplicateGroups) {
+      for (const p of extraProducts) selectedDuplicateIds.add(String(p.id));
+    }
+    const totalExtras = skuDuplicateGroups.reduce((n, g) => n + g.extraProducts.length, 0);
+    if (skuDuplicateGroups.length === 0) {
+      skuDuplicatesStatus.textContent = "No duplicate SKUs found. Your Shopify store is clean.";
+    } else {
+      skuDuplicatesStatus.textContent = `Found ${skuDuplicateGroups.length} SKU${skuDuplicateGroups.length !== 1 ? "s" : ""} with duplicates — ${totalExtras} extra product${totalExtras !== 1 ? "s" : ""} can be deleted. Review below, then click Delete selected.`;
+    }
+    renderDuplicateSkuPanel();
+  } catch (error) {
+    skuDuplicatesStatus.textContent = `Error: ${error.message || error}`;
+    skuDuplicateGroups = [];
+    selectedDuplicateIds.clear();
+    renderDuplicateSkuPanel();
+  }
+  skuDuplicatesRefreshBtn.disabled = false;
+}
+
+async function deleteSelectedDuplicates() {
+  const ids = [...selectedDuplicateIds].map(Number).filter(Boolean);
+  if (!ids.length) return;
+  if (!window.confirm(`Delete ${ids.length} duplicate product${ids.length !== 1 ? "s" : ""} from Shopify? This cannot be undone.`)) return;
+  skuDuplicatesDeleteBtn.disabled = true;
+  skuDuplicatesDeleteBtn.textContent = `Deleting 0/${ids.length}…`;
+
+  // Build a map: deleted product id → keep product id, for mapping repair below
+  const deletedIdToKeepId = new Map();
+  const deletedIdToSku = new Map();
+  for (const { sku, keepProduct, extraProducts } of skuDuplicateGroups) {
+    for (const p of extraProducts) {
+      deletedIdToKeepId.set(Number(p.id), Number(keepProduct.id));
+      deletedIdToSku.set(Number(p.id), sku);
+    }
+  }
+
+  let done = 0;
+  const errors = [];
+  const { shopifySkuMapping } = await chrome.storage.local.get("shopifySkuMapping");
+  const mapping = shopifySkuMapping || {};
+
+  for (const id of ids) {
+    try {
+      await deleteShopifyProducts([id]);
+      selectedDuplicateIds.delete(String(id));
+      skuDuplicateGroups = skuDuplicateGroups.map((g) => ({
+        ...g,
+        extraProducts: g.extraProducts.filter((p) => Number(p.id) !== id)
+      })).filter((g) => g.extraProducts.length > 0);
+
+      // If the deleted product was the SKU mapping target, point mapping to the keep product now.
+      // This prevents the stale-mapping window where updateShopifyForMonitor would hit a 404
+      // and fall back to findProductBySkuPrefix before self-healing.
+      const sku = deletedIdToSku.get(id);
+      if (sku && Number(mapping[sku]) === id) {
+        const keepId = deletedIdToKeepId.get(id);
+        if (keepId) mapping[sku] = keepId;
+        else delete mapping[sku];
+      }
+    } catch (err) {
+      errors.push(`ID ${id}: ${err.message || err}`);
+    }
+    done++;
+    skuDuplicatesDeleteBtn.textContent = `Deleting ${done}/${ids.length}…`;
+    renderDuplicateSkuPanel();
+  }
+  // Persist the repaired mapping so future updates don't hit a stale/deleted product
+  await chrome.storage.local.set({ shopifySkuMapping: mapping });
+
+  skuDuplicatesDeleteBtn.textContent = "Delete selected";
+  skuDuplicatesDeleteBtn.disabled = selectedDuplicateIds.size === 0;
+  const totalExtras = skuDuplicateGroups.reduce((n, g) => n + g.extraProducts.length, 0);
+  if (errors.length) {
+    skuDuplicatesStatus.textContent = `Done with ${errors.length} error${errors.length !== 1 ? "s" : ""}: ${errors.join("; ")}`;
+  } else if (totalExtras === 0) {
+    skuDuplicatesStatus.textContent = "All duplicates deleted. Your Shopify store is clean.";
+    shopifyProductCount = (shopifyProductCount || 0) - done;
+  } else {
+    skuDuplicatesStatus.textContent = `Deleted ${done}. ${totalExtras} duplicate${totalExtras !== 1 ? "s" : ""} remaining.`;
+    shopifyProductCount = (shopifyProductCount || 0) - done;
+  }
+  renderStats(allMonitors);
+}
+
+openSkuDuplicatesBtn.addEventListener("click", async () => {
+  const isOpen = skuDuplicatesPanel.style.display !== "none";
+  if (isOpen) {
+    skuDuplicatesPanel.style.display = "none";
+  } else {
+    skuDuplicatesPanel.style.display = "";
+    shopifyUnmonitoredPanel.style.display = "none";
+    monitorNotShopifyPanel.style.display = "none";
+    await loadDuplicateSkuProducts(true);
+    skuDuplicatesPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+closeSkuDuplicatesBtn.addEventListener("click", () => { skuDuplicatesPanel.style.display = "none"; });
+skuDuplicatesRefreshBtn.addEventListener("click", () => loadDuplicateSkuProducts(true));
+skuDuplicatesDeleteBtn.addEventListener("click", deleteSelectedDuplicates);
+skuDuplicatesSelectAllBtn.addEventListener("click", () => {
+  for (const { extraProducts } of skuDuplicateGroups) {
+    for (const p of extraProducts) selectedDuplicateIds.add(String(p.id));
+  }
+  renderDuplicateSkuPanel();
+});
+skuDuplicatesDeselectBtn.addEventListener("click", () => {
+  selectedDuplicateIds.clear();
+  renderDuplicateSkuPanel();
+});
 
 // ── Logs panel ─────────────────────────────────────────────────────────────
 const logsPanel = document.getElementById("logs-panel");
@@ -1828,25 +2510,42 @@ openShopifyUnmonitoredBtn.addEventListener("click", async () => {
     shopifyUnmonitoredPanel.style.display = "none";
   } else {
     shopifyUnmonitoredPanel.style.display = "";
-    await loadShopifyUnmonitoredProducts();
+    monitorNotShopifyPanel.style.display = "none";
+    skuDuplicatesPanel.style.display = "none";
+    await loadShopifyUnmonitoredProducts(true);
     shopifyUnmonitoredPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 });
 
-openShopifyOutOfStockBtn.addEventListener("click", async () => {
-  const hasCombinedOutOfStock = getCombinedOutOfStockMonitorIds(allMonitors).size > 0;
-  if (outOfStockSectionHidden && hasCombinedOutOfStock) {
-    outOfStockSectionHidden = false;
-    const combinedOutOfStockIds = getCombinedOutOfStockMonitorIds(allMonitors);
-    openShopifyOutOfStockBtn.textContent = combinedOutOfStockIds.size
-      ? `Out of stock (${combinedOutOfStockIds.size})`
-      : "Out of stock";
-    renderGrid(getFilteredMonitors());
-    return;
+openMonitorNotShopifyBtn.addEventListener("click", async () => {
+  const isOpen = monitorNotShopifyPanel.style.display !== "none";
+  if (isOpen) {
+    monitorNotShopifyPanel.style.display = "none";
+  } else {
+    monitorNotShopifyPanel.style.display = "";
+    shopifyUnmonitoredPanel.style.display = "none";
+    skuDuplicatesPanel.style.display = "none";
+    await loadMonitorNotShopifyMonitors(true);
+    monitorNotShopifyPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
-  await loadShopifyOutOfStockMonitors(true);
+});
+
+openShopifyOutOfStockBtn.addEventListener("click", () => {
   outOfStockSectionHidden = false;
-  if (shopifyOutOfStockMonitorIds) {
+  collapsedGroups.delete(SHOPIFY_OOS_GROUP_KEY);
+  updateOutOfStockButtons();
+  renderGrid(getFilteredMonitors());
+  if (getVisibleOutOfStockMonitorIds(allMonitors).size) {
+    monitorGrid.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+checkShopifyOutOfStockBtn.addEventListener("click", async () => {
+  dismissedOutOfStockMonitorIds.clear();
+  outOfStockSectionHidden = false;
+  collapsedGroups.delete(SHOPIFY_OOS_GROUP_KEY);
+  await loadShopifyOutOfStockMonitors(true);
+  if (getVisibleOutOfStockMonitorIds(allMonitors).size) {
     monitorGrid.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 });
@@ -1854,10 +2553,16 @@ openShopifyOutOfStockBtn.addEventListener("click", async () => {
 closeShopifyUnmonitoredBtn.addEventListener("click", () => {
   shopifyUnmonitoredPanel.style.display = "none";
 });
+closeMonitorNotShopifyBtn.addEventListener("click", () => {
+  monitorNotShopifyPanel.style.display = "none";
+});
 
 shopifyUnmonitoredRefreshBtn.addEventListener("click", () => loadShopifyUnmonitoredProducts(true));
 shopifyUnmonitoredClearSelectedBtn.addEventListener("click", clearSelectedShopifyUnmonitoredList);
 shopifyUnmonitoredClearBtn.addEventListener("click", clearShopifyUnmonitoredList);
+monitorNotShopifyRefreshBtn.addEventListener("click", () => loadMonitorNotShopifyMonitors(true));
+monitorNotShopifyClearSelectedBtn.addEventListener("click", clearSelectedMonitorNotShopifyList);
+monitorNotShopifyClearBtn.addEventListener("click", clearMonitorNotShopifyList);
 
 shopifyUnmonitoredList.addEventListener("change", (event) => {
   const target = event.target;
@@ -1867,6 +2572,16 @@ shopifyUnmonitoredList.addEventListener("change", (event) => {
   if (target.checked) selectedShopifyUnmonitoredIds.add(id);
   else selectedShopifyUnmonitoredIds.delete(id);
   renderShopifyUnmonitoredList();
+});
+
+monitorNotShopifyList.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!target.classList.contains("monitor-not-shopify-check")) return;
+  const id = String(target.dataset.id || "");
+  if (!id) return;
+  if (target.checked) selectedMonitorNotShopifyIds.add(id);
+  else selectedMonitorNotShopifyIds.delete(id);
+  renderMonitorNotShopifyList();
 });
 
 shopifyUnmonitoredDeleteSelectedBtn.addEventListener("click", async () => {

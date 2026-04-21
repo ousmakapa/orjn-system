@@ -4,9 +4,10 @@ import {
   getMonitors,
   saveMonitors,
   uid,
-  addLog
+  addLog,
+  canonicalizeBrand
 } from "./shared.js";
-import { updateShopifyForMonitor } from "./shopify.js";
+import { updateShopifyForMonitor, syncMonitorBrandsToShopify, normalizeAllShopifyVendors } from "./shopify.js";
 
 const ALARM_PREFIX = "monitor:";
 const MAX_HISTORY_ENTRIES = 12;
@@ -300,10 +301,30 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
 
       function extractProduct() {
         const r = { name: null, brand: null, type: null, color: null, gender: null, price: null, currency: null, sku: null, description: null, images: [], sizes: [], outOfStock: [], source: [] };
-        const BRANDS = ["Nike","Air Jordan","Jordan","Adidas","Puma","Reebok","New Balance","Converse","Vans","Under Armour","Asics","Saucony","Brooks","Hoka","On Running","On","Salomon","Timberland","UGG","Dr. Martens","Birkenstock","Clarks","The North Face","Columbia","Patagonia","Supreme","Off-White","Balenciaga","Gucci","Louis Vuitton","Yeezy","Fila","Tommy Hilfiger","Ralph Lauren","Lacoste","Champion","Kappa","Umbro","Ellesse","Diadora","Le Coq Sportif","Mizuno","Karhu","Crocs","Skechers","Steve Madden","Ecco","Geox","Camper","Stussy","Palace","Kith","Carhartt","Dickies","Stone Island","Moncler","Arc'teryx","Merrell","Keen","Teva","Calvin Klein","Hugo Boss"];
+        const BRANDS = ["Nike","Nike Sportswear","Nike SB","Air Jordan","Jordan","Jordan Brand","Adidas","Adidas Originals","Puma","Reebok","Reebok Classic","New Balance","NewBalance","NB","Converse","Converse All Star","Converse CONS","Vans","Van's","Under Armour","Under Armor","UA","Asics","Asics Tiger","Saucony","Brooks","Brooks Running","Hoka","Hoka One One","ON Cloud","On Running","On Cloud Running","Salomon","Salomon Sportstyle","Timberland","Timberland Pro","UGG","UGG Australia","Dr. Martens","Dr Martens","Doc Martens","Birkenstock","Clarks","Clarks Originals","The North Face","North Face","TNF","Columbia","Columbia Sportswear","Patagonia","Supreme","Off-White","Off White","Offwhite","Balenciaga","Gucci","Louis Vuitton","LV","Yeezy","Adidas Yeezy","Fila","Tommy Hilfiger","Tommy","Ralph Lauren","Polo Ralph Lauren","Polo","Lacoste","Champion","Kappa","Umbro","Ellesse","Diadora","Le Coq Sportif","Lecoqsportif","Mizuno","Karhu","Crocs","Skechers","Skecher","Steve Madden","Ecco","Geox","Camper","Stussy","Stüssy","Palace","Palace Skateboards","Kith","Carhartt","Carhartt WIP","Dickies","Stone Island","Moncler","Arc'teryx","Arcteryx","Merrell","Keen","Teva","Calvin Klein","CK","Hugo Boss","Boss","Boss by Hugo Boss"];
         const TYPE_KEYWORDS = {"basketball":"Basketball","casual":"Lifestyle","lifestyle":"Lifestyle","running":"Running","football":"Football","soccer":"Soccer","training":"Training","hiking":"Hiking","trail":"Trail","tennis":"Tennis","golf":"Golf","skate":"Skate","skateboarding":"Skate","crossfit":"Training","cross-training":"Training","walking":"Walking","sneaker":"Lifestyle","slip-on":"Lifestyle","sandal":"Sandal","boot":"Boot","loafer":"Lifestyle"};
         const COLORS = {"Black":["black","onyx","jet","ebony","obsidian","raven","coal","ink","shadow","noir","licorice","pitch","tripleblack","triple-black","coreblack","core-black","phantom","anthracite","soot","carbon"],"White":["white","ivory","snow","pearl","sail","cream","bone","eggshell","linen","frost","alabaster","porcelain","chalk","milk","cotton","ghost","offwhite","off-white","whisper","paper","shell","antique"],"Red":["red","crimson","scarlet","ruby","burgundy","maroon","wine","cherry","carmine","cardinal","tomato","garnet","vermillion","vermilion","brick","blood","firebrick","cranberry","raspberry","strawberry","rose","claret","mahogany","terra","cotta","sienna","auburn","rubyred","oxblood","merlot","poppy","coralred","sunsetred","chili","rubywine"],"Blue":["blue","navy","cobalt","royal","indigo","denim","sky","powder","midnight","steel","slate","sapphire","azure","thunder","ice","cornflower","periwinkle","iris","ultramarine","prussian","admiral","marine","federal","storm","glacier","arctic","aegean","obsidian-blue","turbo","polar","mistblue","oceanblue","deepblue","lightblue","darkblue","hyperblue","universityblue","carolinablue"],"Green":["green","olive","sage","forest","army","jade","emerald","mint","fern","moss","pine","volt","lime","hunter","bottle","kelly","shamrock","chartreuse","avocado","pistachio","pear","leaf","basil","seaweed","jungle","cucumber","matcha","celadon","viridian","malachite","voltgreen","neongreen","electricgreen","loden","spruce","evergreen","clover","pea","grassy","seaglass","seafoamgreen"],"Yellow":["yellow","gold","golden","mustard","lemon","canary","butter","banana","honey","sunflower","flaxen","straw","blonde","champagne","vanilla","daffodil","citrine","topaz","citrus","maize","corn","ambergold","sandgold","sulphur","mustardseed","dijon","neonyellow","electricyellow"],"Orange":["orange","amber","tangerine","apricot","rust","copper","pumpkin","saffron","coral","burnt","cinnamon","papaya","mango","melon","clay","ginger","tiger","marigold","bronze","peach","persimmon","nectarine","cantaloupe","sunset","burntorange","terracotta","carrot","kumquat"],"Violet":["purple","violet","lavender","lilac","plum","grape","mauve","amethyst","orchid","wisteria","heather","thistle","periwinkle","mulberry","eggplant","byzantium","aubergine","boysenberry","violetdust","deeppurple","royalpurple"],"Pink":["pink","blush","fuchsia","magenta","salmon","rose","bubblegum","flamingo","watermelon","peony","carnation","petal","flush","rouge","blossom","pastel","candy","lollipop","neon","cerise","hot","dusty","millennial","rosepink","powderpink","softpink","brightpink","shockpink"],"Brown":["brown","tan","beige","camel","mocha","chocolate","coffee","sand","taupe","nude","natural","khaki","wheat","stone","walnut","hazel","toffee","espresso","sepia","umber","fawn","oatmeal","biscuit","latte","ecru","buff","driftwood","chestnut","cacao","bark","leather","suede","caramel","pecan","almond","acorn","cocoa","mink","tobacco","saddle","oak","hickory","truffle","earth","mud","dune","bran"],"Gray":["gray","grey","silver","charcoal","ash","smoke","graphite","pewter","cement","concrete","cloud","wolf","pebble","flint","iron","lead","fossil","heather","marengo","dove","cool","smokey","stonegrey","stone-gray","coolgrey","cool-grey","neutralgray","neutralgrey","platinum","gunmetal"],"Turquoise":["turquoise","teal","aqua","cyan","seafoam","aquamarine","caribbean","lagoon","cerulean","peacock","ocean","pool","mintblue","tiffany","robinsegg","bluegreen","turq"],"Multicolor":["multi","multicolor","multi-color","assorted"]};
-        const pickBrand = (t) => { if (!t) return null; const l = t.toLowerCase(); for (const b of BRANDS) { if (l.includes(b.toLowerCase())) return b; } return null; };
+        const canonicalizeBrand = (value) => {
+          const normalized = nt(value);
+          if (!normalized) return "";
+          const lower = normalized.toLowerCase();
+          if (lower === "air jordan" || lower === "jordan") return "Jordan";
+          if (lower === "on" || lower === "on running" || lower === "on cloud") return "ON Cloud";
+          for (const b of BRANDS) {
+            if (lower === b.toLowerCase()) return b;
+          }
+          return normalized;
+        };
+        const pickBrand = (t) => {
+          if (!t) return null;
+          const l = t.toLowerCase();
+          if (l.includes("air jordan")) return "Jordan";
+          if (l.includes("on running") || l.includes("on cloud")) return "ON Cloud";
+          for (const b of BRANDS) {
+            if (l.includes(b.toLowerCase())) return canonicalizeBrand(b);
+          }
+          return null;
+        };
         const pickType = (t) => { if (!t) return null; const l = t.toLowerCase(); for (const [kw, mapped] of Object.entries(TYPE_KEYWORDS)) { if (l.includes(kw)) return mapped; } return null; };
         const pickColor = (t) => { if (!t) return "Multicolor"; const l = t.toLowerCase(); for (const [base, synonyms] of Object.entries(COLORS)) { if (synonyms.some((c) => l.includes(c))) return base; } return "Multicolor"; };
         const looksLikeSku = (v) => v && /^[A-Z0-9]{3,12}(-[A-Z0-9]{2,6}){0,2}$/i.test(v.trim()) && v.length >= 4 && v.length <= 20;
@@ -424,8 +445,10 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
           if (gm) { if (!r.name) r.name = gm[1].trim(); if (!r.gender) r.gender = gm[2].replace(/['\u2019]s?\s*$/i, '').trim(); }
           else if (!r.name) { const pm = monitorName.match(/^(.+?)\s*\|/); if (pm) r.name = pm[1].replace(/\s*[-\u2013]\s*$/, '').trim(); }
         }
+        const nameBrand = r.name ? pickBrand(r.name) : null;
         const searchText = [r.name, r.description, document.title].filter(Boolean).join(" ");
-        if (!r.brand) r.brand = pickBrand(searchText) || pickBrand(metaText);
+        if (!r.brand) r.brand = nameBrand || pickBrand(searchText) || pickBrand(metaText);
+        if (r.brand) r.brand = canonicalizeBrand(r.brand);
         if (!r.type) r.type = pickType(searchText) || pickType(metaText);
         r.color = pickColor(r.color || searchText);
         if (!r.sizes.length) { const sel = document.querySelector('select[name*="size" i],select[id*="size" i],select[class*="size" i],select[data-option-name*="size" i]'); if (sel) { Array.from(sel.options).forEach((o) => { const t = o.text.trim(); if (!t || /^(select|choose|--)/i.test(t)) return; r.sizes.push(t); if (o.disabled || /out.?of.?stock|sold.?out|unavailable/i.test(o.text)) r.outOfStock.push(t); }); } }
@@ -572,10 +595,30 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
 
       function extractProduct() {
         const r = { name: null, brand: null, type: null, color: null, gender: null, price: null, currency: null, sku: null, description: null, images: [], sizes: [], outOfStock: [], source: [] };
-        const BRANDS = ["Nike","Air Jordan","Jordan","Adidas","Puma","Reebok","New Balance","Converse","Vans","Under Armour","Asics","Saucony","Brooks","Hoka","On Running","On","Salomon","Timberland","UGG","Dr. Martens","Birkenstock","Clarks","The North Face","Columbia","Patagonia","Supreme","Off-White","Balenciaga","Gucci","Louis Vuitton","Yeezy","Fila","Tommy Hilfiger","Ralph Lauren","Lacoste","Champion","Kappa","Umbro","Ellesse","Diadora","Le Coq Sportif","Mizuno","Karhu","Crocs","Skechers","Steve Madden","Ecco","Geox","Camper","Stussy","Palace","Kith","Carhartt","Dickies","Stone Island","Moncler","Arc'teryx","Merrell","Keen","Teva","Calvin Klein","Hugo Boss"];
+        const BRANDS = ["Nike","Nike Sportswear","Nike SB","Air Jordan","Jordan","Jordan Brand","Adidas","Adidas Originals","Puma","Reebok","Reebok Classic","New Balance","NewBalance","NB","Converse","Converse All Star","Converse CONS","Vans","Van's","Under Armour","Under Armor","UA","Asics","Asics Tiger","Saucony","Brooks","Brooks Running","Hoka","Hoka One One","ON Cloud","On Running","On Cloud Running","Salomon","Salomon Sportstyle","Timberland","Timberland Pro","UGG","UGG Australia","Dr. Martens","Dr Martens","Doc Martens","Birkenstock","Clarks","Clarks Originals","The North Face","North Face","TNF","Columbia","Columbia Sportswear","Patagonia","Supreme","Off-White","Off White","Offwhite","Balenciaga","Gucci","Louis Vuitton","LV","Yeezy","Adidas Yeezy","Fila","Tommy Hilfiger","Tommy","Ralph Lauren","Polo Ralph Lauren","Polo","Lacoste","Champion","Kappa","Umbro","Ellesse","Diadora","Le Coq Sportif","Lecoqsportif","Mizuno","Karhu","Crocs","Skechers","Skecher","Steve Madden","Ecco","Geox","Camper","Stussy","Stüssy","Palace","Palace Skateboards","Kith","Carhartt","Carhartt WIP","Dickies","Stone Island","Moncler","Arc'teryx","Arcteryx","Merrell","Keen","Teva","Calvin Klein","CK","Hugo Boss","Boss","Boss by Hugo Boss"];
         const TYPE_KEYWORDS = {"basketball":"Basketball","casual":"Lifestyle","lifestyle":"Lifestyle","running":"Running","football":"Football","soccer":"Soccer","training":"Training","hiking":"Hiking","trail":"Trail","tennis":"Tennis","golf":"Golf","skate":"Skate","skateboarding":"Skate","crossfit":"Training","cross-training":"Training","walking":"Walking","sneaker":"Lifestyle","slip-on":"Lifestyle","sandal":"Sandal","boot":"Boot","loafer":"Lifestyle"};
         const COLORS = {"Black":["black","onyx","jet","ebony","obsidian","raven","coal","ink","shadow","noir","licorice","pitch","tripleblack","triple-black","coreblack","core-black","phantom","anthracite","soot","carbon"],"White":["white","ivory","snow","pearl","sail","cream","bone","eggshell","linen","frost","alabaster","porcelain","chalk","milk","cotton","ghost","offwhite","off-white","whisper","paper","shell","antique"],"Red":["red","crimson","scarlet","ruby","burgundy","maroon","wine","cherry","carmine","cardinal","tomato","garnet","vermillion","vermilion","brick","blood","firebrick","cranberry","raspberry","strawberry","rose","claret","mahogany","terra","cotta","sienna","auburn","rubyred","oxblood","merlot","poppy","coralred","sunsetred","chili","rubywine"],"Blue":["blue","navy","cobalt","royal","indigo","denim","sky","powder","midnight","steel","slate","sapphire","azure","thunder","ice","cornflower","periwinkle","iris","ultramarine","prussian","admiral","marine","federal","storm","glacier","arctic","aegean","obsidian-blue","turbo","polar","mistblue","oceanblue","deepblue","lightblue","darkblue","hyperblue","universityblue","carolinablue"],"Green":["green","olive","sage","forest","army","jade","emerald","mint","fern","moss","pine","volt","lime","hunter","bottle","kelly","shamrock","chartreuse","avocado","pistachio","pear","leaf","basil","seaweed","jungle","cucumber","matcha","celadon","viridian","malachite","voltgreen","neongreen","electricgreen","loden","spruce","evergreen","clover","pea","grassy","seaglass","seafoamgreen"],"Yellow":["yellow","gold","golden","mustard","lemon","canary","butter","banana","honey","sunflower","flaxen","straw","blonde","champagne","vanilla","daffodil","citrine","topaz","citrus","maize","corn","ambergold","sandgold","sulphur","mustardseed","dijon","neonyellow","electricyellow"],"Orange":["orange","amber","tangerine","apricot","rust","copper","pumpkin","saffron","coral","burnt","cinnamon","papaya","mango","melon","clay","ginger","tiger","marigold","bronze","peach","persimmon","nectarine","cantaloupe","sunset","burntorange","terracotta","carrot","kumquat"],"Violet":["purple","violet","lavender","lilac","plum","grape","mauve","amethyst","orchid","wisteria","heather","thistle","periwinkle","mulberry","eggplant","byzantium","aubergine","boysenberry","violetdust","deeppurple","royalpurple"],"Pink":["pink","blush","fuchsia","magenta","salmon","rose","bubblegum","flamingo","watermelon","peony","carnation","petal","flush","rouge","blossom","pastel","candy","lollipop","neon","cerise","hot","dusty","millennial","rosepink","powderpink","softpink","brightpink","shockpink"],"Brown":["brown","tan","beige","camel","mocha","chocolate","coffee","sand","taupe","nude","natural","khaki","wheat","stone","walnut","hazel","toffee","espresso","sepia","umber","fawn","oatmeal","biscuit","latte","ecru","buff","driftwood","chestnut","cacao","bark","leather","suede","caramel","pecan","almond","acorn","cocoa","mink","tobacco","saddle","oak","hickory","truffle","earth","mud","dune","bran"],"Gray":["gray","grey","silver","charcoal","ash","smoke","graphite","pewter","cement","concrete","cloud","wolf","pebble","flint","iron","lead","fossil","heather","marengo","dove","cool","smokey","stonegrey","stone-gray","coolgrey","cool-grey","neutralgray","neutralgrey","platinum","gunmetal"],"Turquoise":["turquoise","teal","aqua","cyan","seafoam","aquamarine","caribbean","lagoon","cerulean","peacock","ocean","pool","mintblue","tiffany","robinsegg","bluegreen","turq"],"Multicolor":["multi","multicolor","multi-color","assorted"]};
-        const pickBrand = (t) => { if (!t) return null; const l = t.toLowerCase(); for (const b of BRANDS) { if (l.includes(b.toLowerCase())) return b; } return null; };
+        const canonicalizeBrand = (value) => {
+          const normalized = nt(value);
+          if (!normalized) return "";
+          const lower = normalized.toLowerCase();
+          if (lower === "air jordan" || lower === "jordan") return "Jordan";
+          if (lower === "on" || lower === "on running" || lower === "on cloud") return "ON Cloud";
+          for (const b of BRANDS) {
+            if (lower === b.toLowerCase()) return b;
+          }
+          return normalized;
+        };
+        const pickBrand = (t) => {
+          if (!t) return null;
+          const l = t.toLowerCase();
+          if (l.includes("air jordan")) return "Jordan";
+          if (l.includes("on running") || l.includes("on cloud")) return "ON Cloud";
+          for (const b of BRANDS) {
+            if (l.includes(b.toLowerCase())) return canonicalizeBrand(b);
+          }
+          return null;
+        };
         const pickType = (t) => { if (!t) return null; const l = t.toLowerCase(); for (const [kw, mapped] of Object.entries(TYPE_KEYWORDS)) { if (l.includes(kw)) return mapped; } return null; };
         const pickColor = (t) => { if (!t) return "Multicolor"; const l = t.toLowerCase(); for (const [base, synonyms] of Object.entries(COLORS)) { if (synonyms.some((c) => l.includes(c))) return base; } return "Multicolor"; };
         const looksLikeSku = (v) => v && /^[A-Z0-9]{3,12}(-[A-Z0-9]{2,6}){0,2}$/i.test(v.trim()) && v.length >= 4 && v.length <= 20;
@@ -694,8 +737,10 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
           if (gm) { if (!r.name) r.name = gm[1].trim(); if (!r.gender) r.gender = gm[2].replace(/['\u2019]s?\s*$/i, '').trim(); }
           else if (!r.name) { const pm = monitorName.match(/^(.+?)\s*\|/); if (pm) r.name = pm[1].replace(/\s*[-\u2013]\s*$/, '').trim(); }
         }
+        const nameBrand = r.name ? pickBrand(r.name) : null;
         const searchText = [r.name, r.description, document.title].filter(Boolean).join(" ");
-        if (!r.brand) r.brand = pickBrand(searchText) || pickBrand(metaText);
+        if (!r.brand) r.brand = nameBrand || pickBrand(searchText) || pickBrand(metaText);
+        if (r.brand) r.brand = canonicalizeBrand(r.brand);
         if (!r.type) r.type = pickType(searchText) || pickType(metaText);
         r.color = pickColor(r.color || searchText);
         if (!r.sizes.length) { const sel = document.querySelector('select[name*="size" i],select[id*="size" i],select[class*="size" i],select[data-option-name*="size" i]'); if (sel) { Array.from(sel.options).forEach((o) => { const t = o.text.trim(); if (!t || /^(select|choose|--)/i.test(t)) return; r.sizes.push(t); if (o.disabled || /out.?of.?stock|sold.?out|unavailable/i.test(o.text)) r.outOfStock.push(t); }); } }
@@ -986,6 +1031,7 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
           next.initialCapturedAt = new Date().toISOString();
           next.productData = snapshot.fullPage.productData || null;
           if (next.productData) {
+            next.productData.brand = canonicalizeBrand(next.productData.brand);
             const extractedGender = next.productData.gender || null;
             next.productData.gender = extractedGender || "Not defined";
             next.productData.extractedGender = extractedGender;
@@ -997,6 +1043,7 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
             next.productData = { ...monitor.productDataOverrides };
           }
           if (next.productData) {
+            next.productData.brand = canonicalizeBrand(next.productData.brand);
             next.productData.gender = next.productData.extractedGender || "Not defined";
             next.productData.genderDisplay = next.productData.genderDisplay || next.productData.gender;
           }
@@ -1236,6 +1283,12 @@ async function deleteMonitors(monitorIds) {
   }
 }
 
+async function normalizeMonitorBrandsAndShopify() {
+  const monitors = await getMonitors();
+  await syncMonitorBrandsToShopify(monitors).catch(() => {});
+  await normalizeAllShopifyVendors().catch(() => {});
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   captureTabIds.delete(tabId);
 });
@@ -1243,11 +1296,13 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.runtime.onInstalled.addListener(async () => {
   const monitors = await getMonitors();
   await Promise.all(monitors.map((monitor) => ensureAlarm(monitor)));
+  normalizeMonitorBrandsAndShopify().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   const monitors = await getMonitors();
   await Promise.all(monitors.map((monitor) => ensureAlarm(monitor)));
+  normalizeMonitorBrandsAndShopify().catch(() => {});
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -1300,6 +1355,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       if (message.type === "get-monitors") {
+        const monitors = await getMonitors();
+        sendResponse({ ok: true, monitors });
+        return;
+      }
+
+      if (message.type === "normalize-monitor-brands") {
+        await normalizeMonitorBrandsAndShopify();
         const monitors = await getMonitors();
         sendResponse({ ok: true, monitors });
         return;
