@@ -134,15 +134,15 @@ const COLOR_MAP = {
 
 function normalizeColor(raw) {
   if (!raw) return "Multicolor";
-  const words = raw.toLowerCase().replace(/[^a-z\s-]/g, " ").split(/\s+/).filter(Boolean);
+  const normalized = raw.toLowerCase().replace(/[^a-z0-9\s-]/g, " ");
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
   for (const word of words) {
     if (COLOR_MAP[word]) return COLOR_MAP[word];
   }
-  // Try partial match
-  for (const word of words) {
-    for (const [key, val] of Object.entries(COLOR_MAP)) {
-      if (word.includes(key) || key.includes(word)) return val;
-    }
+  for (const [key, val] of Object.entries(COLOR_MAP)) {
+    const keyCompact = key.replace(/[^a-z0-9]/g, "");
+    if (keyCompact.length >= 6 && compact.includes(keyCompact)) return val;
   }
   return "Multicolor";
 }

@@ -300,7 +300,7 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
       }
 
       function extractProduct() {
-        const r = { name: null, brand: null, type: null, color: null, gender: null, price: null, currency: null, sku: null, description: null, images: [], sizes: [], outOfStock: [], source: [] };
+        const r = { name: null, brand: null, type: null, color: null, colorRaw: null, colorFinal: null, gender: null, price: null, currency: null, sku: null, description: null, images: [], sizes: [], outOfStock: [], source: [] };
         const BRANDS = ["Nike","Nike Sportswear","Nike SB","Air Jordan","Jordan","Jordan Brand","Adidas","Adidas Originals","Puma","Reebok","Reebok Classic","New Balance","NewBalance","NB","Converse","Converse All Star","Converse CONS","Vans","Van's","Under Armour","Under Armor","UA","Asics","Asics Tiger","Saucony","Brooks","Brooks Running","Hoka","Hoka One One","ON Cloud","On Running","On Cloud Running","Salomon","Salomon Sportstyle","Timberland","Timberland Pro","UGG","UGG Australia","Dr. Martens","Dr Martens","Doc Martens","Birkenstock","Clarks","Clarks Originals","The North Face","North Face","TNF","Columbia","Columbia Sportswear","Patagonia","Supreme","Off-White","Off White","Offwhite","Balenciaga","Gucci","Louis Vuitton","LV","Yeezy","Adidas Yeezy","Fila","Tommy Hilfiger","Tommy","Ralph Lauren","Polo Ralph Lauren","Polo","Lacoste","Champion","Kappa","Umbro","Ellesse","Diadora","Le Coq Sportif","Lecoqsportif","Mizuno","Karhu","Crocs","Skechers","Skecher","Steve Madden","Ecco","Geox","Camper","Stussy","Stüssy","Palace","Palace Skateboards","Kith","Carhartt","Carhartt WIP","Dickies","Stone Island","Moncler","Arc'teryx","Arcteryx","Merrell","Keen","Teva","Calvin Klein","CK","Hugo Boss","Boss","Boss by Hugo Boss"];
         const TYPE_KEYWORDS = {"basketball":"Basketball","casual":"Lifestyle","lifestyle":"Lifestyle","running":"Running","football":"Football","soccer":"Soccer","training":"Training","hiking":"Hiking","trail":"Trail","tennis":"Tennis","golf":"Golf","skate":"Skate","skateboarding":"Skate","crossfit":"Training","cross-training":"Training","walking":"Walking","sneaker":"Lifestyle","slip-on":"Lifestyle","sandal":"Sandal","boot":"Boot","loafer":"Lifestyle"};
         const COLORS = {"Black":["black","onyx","jet","ebony","obsidian","raven","coal","ink","shadow","noir","licorice","pitch","tripleblack","triple-black","coreblack","core-black","phantom","anthracite","soot","carbon"],"White":["white","ivory","snow","pearl","sail","cream","bone","eggshell","linen","frost","alabaster","porcelain","chalk","milk","cotton","ghost","offwhite","off-white","whisper","paper","shell","antique"],"Red":["red","crimson","scarlet","ruby","burgundy","maroon","wine","cherry","carmine","cardinal","tomato","garnet","vermillion","vermilion","brick","blood","firebrick","cranberry","raspberry","strawberry","rose","claret","mahogany","terra","cotta","sienna","auburn","rubyred","oxblood","merlot","poppy","coralred","sunsetred","chili","rubywine"],"Blue":["blue","navy","cobalt","royal","indigo","denim","sky","powder","midnight","steel","slate","sapphire","azure","thunder","ice","cornflower","periwinkle","iris","ultramarine","prussian","admiral","marine","federal","storm","glacier","arctic","aegean","obsidian-blue","turbo","polar","mistblue","oceanblue","deepblue","lightblue","darkblue","hyperblue","universityblue","carolinablue"],"Green":["green","olive","sage","forest","army","jade","emerald","mint","fern","moss","pine","volt","lime","hunter","bottle","kelly","shamrock","chartreuse","avocado","pistachio","pear","leaf","basil","seaweed","jungle","cucumber","matcha","celadon","viridian","malachite","voltgreen","neongreen","electricgreen","loden","spruce","evergreen","clover","pea","grassy","seaglass","seafoamgreen"],"Yellow":["yellow","gold","golden","mustard","lemon","canary","butter","banana","honey","sunflower","flaxen","straw","blonde","champagne","vanilla","daffodil","citrine","topaz","citrus","maize","corn","ambergold","sandgold","sulphur","mustardseed","dijon","neonyellow","electricyellow"],"Orange":["orange","amber","tangerine","apricot","rust","copper","pumpkin","saffron","coral","burnt","cinnamon","papaya","mango","melon","clay","ginger","tiger","marigold","bronze","peach","persimmon","nectarine","cantaloupe","sunset","burntorange","terracotta","carrot","kumquat"],"Violet":["purple","violet","lavender","lilac","plum","grape","mauve","amethyst","orchid","wisteria","heather","thistle","periwinkle","mulberry","eggplant","byzantium","aubergine","boysenberry","violetdust","deeppurple","royalpurple"],"Pink":["pink","blush","fuchsia","magenta","salmon","rose","bubblegum","flamingo","watermelon","peony","carnation","petal","flush","rouge","blossom","pastel","candy","lollipop","neon","cerise","hot","dusty","millennial","rosepink","powderpink","softpink","brightpink","shockpink"],"Brown":["brown","tan","beige","camel","mocha","chocolate","coffee","sand","taupe","nude","natural","khaki","wheat","stone","walnut","hazel","toffee","espresso","sepia","umber","fawn","oatmeal","biscuit","latte","ecru","buff","driftwood","chestnut","cacao","bark","leather","suede","caramel","pecan","almond","acorn","cocoa","mink","tobacco","saddle","oak","hickory","truffle","earth","mud","dune","bran"],"Gray":["gray","grey","silver","charcoal","ash","smoke","graphite","pewter","cement","concrete","cloud","wolf","pebble","flint","iron","lead","fossil","heather","marengo","dove","cool","smokey","stonegrey","stone-gray","coolgrey","cool-grey","neutralgray","neutralgrey","platinum","gunmetal"],"Turquoise":["turquoise","teal","aqua","cyan","seafoam","aquamarine","caribbean","lagoon","cerulean","peacock","ocean","pool","mintblue","tiffany","robinsegg","bluegreen","turq"],"Multicolor":["multi","multicolor","multi-color","assorted"]};
@@ -326,7 +326,21 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
           return null;
         };
         const pickType = (t) => { if (!t) return null; const l = t.toLowerCase(); for (const [kw, mapped] of Object.entries(TYPE_KEYWORDS)) { if (l.includes(kw)) return mapped; } return null; };
-        const pickColor = (t) => { if (!t) return "Multicolor"; const l = t.toLowerCase(); for (const [base, synonyms] of Object.entries(COLORS)) { if (synonyms.some((c) => l.includes(c))) return base; } return "Multicolor"; };
+        const pickColor = (t) => {
+          if (!t) return "Multicolor";
+          const normalized = t.toLowerCase().replace(/[^a-z0-9\s-]/g, " ");
+          const words = normalized.split(/\s+/).filter(Boolean);
+          const compact = normalized.replace(/[^a-z0-9]/g, "");
+          for (const [base, synonyms] of Object.entries(COLORS)) {
+            if (synonyms.some((c) => {
+              const key = String(c).toLowerCase();
+              if (words.includes(key)) return true;
+              const keyCompact = key.replace(/[^a-z0-9]/g, "");
+              return keyCompact.length >= 6 && compact.includes(keyCompact);
+            })) return base;
+          }
+          return "Multicolor";
+        };
         const looksLikeSku = (v) => v && /^[A-Z0-9]{3,12}(-[A-Z0-9]{2,6}){0,2}$/i.test(v.trim()) && v.length >= 4 && v.length <= 20;
         document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
           try {
@@ -383,8 +397,31 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
         if (!r.brand) { const m = metaText.match(/\bBrand[:\s]+([^\n\r,/<]{2,40})/i); if (m) { r.brand = m[1].trim(); r.source.push("labeled"); } }
         if (!r.type) { const m = metaText.match(/\b(?:Type|Category|Sport|Usage|Department)[:\s]+([^\n\r,/<]{2,30})/i); if (m) { r.type = pickType(m[1]) || m[1].trim(); r.source.push("labeled"); } }
         if (!r.color) { const m = metaText.match(/\bColou?r[:\s]+([^\n\r,/<]{2,30})/i); if (m) r.color = m[1].split('/')[0].trim(); }
-        { const ssEl = document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]'); if (ssEl) { const t = ssEl.textContent?.trim(); if (t) { const first = t.split('/')[0].trim(); if (first) r.color = first; } } }
-        if (!r.color) { const prodArea = document.querySelector('main,[role="main"]') || document.body; for (const el of prodArea.querySelectorAll('p,span,div')) { if (el.children.length > 0) continue; const t = (el.textContent || '').trim(); if (!t || t.length > 60) continue; const cm = t.match(/^([A-Z][a-zA-Z]+(?:\/[A-Z][a-zA-Z]+)*)$/); if (cm) { const normalized = pickColor(cm[1].split('/')[0]); if (normalized !== "Multicolor") { r.color = normalized; break; } } } }
+        let flSelectedColor = null;
+        let flSelectedColorNormalized = null;
+        {
+          const styleCandidates = [
+            document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]')?.textContent?.trim() || '',
+            document.querySelector('.ColorwayStyles-field.button-field--selected,[class*="button-field--selected"]')?.getAttribute('aria-label')?.trim() || '',
+            document.querySelector('.ColorwayStyles-field.button-field--selected img[alt],[class*="button-field--selected"] img[alt]')?.getAttribute('alt')?.trim() || ''
+          ];
+          for (const candidate of styleCandidates) {
+            if (!candidate) continue;
+            const cleaned = candidate
+              .replace(/^Color\s+/i, '')
+              .replace(/\s+is selected.*$/i, '')
+              .trim();
+            const first = cleaned.split('/')[0].trim();
+            if (!first) continue;
+            flSelectedColor = first;
+            flSelectedColorNormalized = pickColor(first);
+            r.colorRaw = first;
+            r.color = flSelectedColorNormalized;
+            r.source.push("fl-selected-style-color");
+            break;
+          }
+        }
+        if (!flSelectedColorNormalized && !r.color) { const prodArea = document.querySelector('main,[role="main"]') || document.body; for (const el of prodArea.querySelectorAll('p,span,div')) { if (el.children.length > 0) continue; const t = (el.textContent || '').trim(); if (!t || t.length > 60) continue; const cm = t.match(/^([A-Z][a-zA-Z]+(?:\/[A-Z][a-zA-Z]+)*)$/); if (cm) { const normalized = pickColor(cm[1].split('/')[0]); if (normalized !== "Multicolor") { r.color = normalized; break; } } } }
         if (!r.gender) {
           const flHeader = document.querySelector('.ProductDetails-header-V2');
           if (flHeader) {
@@ -467,7 +504,8 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
         if (!r.brand) r.brand = nameBrand || pickBrand(searchText) || pickBrand(metaText);
         if (r.brand) r.brand = canonicalizeBrand(r.brand);
         if (!r.type) r.type = pickType(searchText) || pickType(metaText);
-        r.color = pickColor(r.color || searchText);
+        r.color = flSelectedColorNormalized || pickColor(r.color || searchText);
+        r.colorFinal = r.color;
         if (!r.sizes.length) { const sel = document.querySelector('select[name*="size" i],select[id*="size" i],select[class*="size" i],select[data-option-name*="size" i]'); if (sel) { Array.from(sel.options).forEach((o) => { const t = o.text.trim(); if (!t || /^(select|choose|--)/i.test(t)) return; r.sizes.push(t); if (o.disabled || /out.?of.?stock|sold.?out|unavailable/i.test(o.text)) r.outOfStock.push(t); }); } }
         if (!r.sizes.length) { document.querySelectorAll('input[type="radio"][name*="size" i],input[type="radio"][data-option-value-id]').forEach((input) => { const t = (input.value || "").trim(); if (!t || /^(select|choose|--)/i.test(t) || t.length > 20) return; if (!r.sizes.includes(t)) r.sizes.push(t); if (input.classList.contains("disabled") || input.disabled) r.outOfStock.push(t); }); }
         if (!r.sizes.length) { for (const csel of ['[class*="size"] button,[class*="size"] label','[class*="swatch"] button,[class*="swatch"] label','[data-option-name*="size" i] button,[data-option-name*="size" i] label','[class*="size-selector"] button','[class*="sizebtn"]','[class*="size-btn"]']) { const els = document.querySelectorAll(csel); if (els.length > 0 && els.length < 80) { els.forEach((el) => { const t = el.textContent?.trim(); if (!t || t.length > 20 || r.sizes.includes(t)) return; r.sizes.push(t); const cls = ((el.className || "") + " " + (el.getAttribute("aria-label") || "")).toLowerCase(); const oos = el.classList.contains("disabled") || el.disabled || el.getAttribute("aria-disabled") === "true" || /disabled|out.?of.?stock|sold.?out|unavailable|not-available/i.test(cls) || window.getComputedStyle(el).textDecoration.includes("line-through"); if (oos) r.outOfStock.push(t); }); if (r.sizes.length) break; } } }
@@ -611,7 +649,7 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
       }
 
       function extractProduct() {
-        const r = { name: null, brand: null, type: null, color: null, gender: null, price: null, currency: null, sku: null, description: null, images: [], sizes: [], outOfStock: [], source: [] };
+        const r = { name: null, brand: null, type: null, color: null, colorRaw: null, colorFinal: null, gender: null, price: null, currency: null, sku: null, description: null, images: [], sizes: [], outOfStock: [], source: [] };
         const BRANDS = ["Nike","Nike Sportswear","Nike SB","Air Jordan","Jordan","Jordan Brand","Adidas","Adidas Originals","Puma","Reebok","Reebok Classic","New Balance","NewBalance","NB","Converse","Converse All Star","Converse CONS","Vans","Van's","Under Armour","Under Armor","UA","Asics","Asics Tiger","Saucony","Brooks","Brooks Running","Hoka","Hoka One One","ON Cloud","On Running","On Cloud Running","Salomon","Salomon Sportstyle","Timberland","Timberland Pro","UGG","UGG Australia","Dr. Martens","Dr Martens","Doc Martens","Birkenstock","Clarks","Clarks Originals","The North Face","North Face","TNF","Columbia","Columbia Sportswear","Patagonia","Supreme","Off-White","Off White","Offwhite","Balenciaga","Gucci","Louis Vuitton","LV","Yeezy","Adidas Yeezy","Fila","Tommy Hilfiger","Tommy","Ralph Lauren","Polo Ralph Lauren","Polo","Lacoste","Champion","Kappa","Umbro","Ellesse","Diadora","Le Coq Sportif","Lecoqsportif","Mizuno","Karhu","Crocs","Skechers","Skecher","Steve Madden","Ecco","Geox","Camper","Stussy","Stüssy","Palace","Palace Skateboards","Kith","Carhartt","Carhartt WIP","Dickies","Stone Island","Moncler","Arc'teryx","Arcteryx","Merrell","Keen","Teva","Calvin Klein","CK","Hugo Boss","Boss","Boss by Hugo Boss"];
         const TYPE_KEYWORDS = {"basketball":"Basketball","casual":"Lifestyle","lifestyle":"Lifestyle","running":"Running","football":"Football","soccer":"Soccer","training":"Training","hiking":"Hiking","trail":"Trail","tennis":"Tennis","golf":"Golf","skate":"Skate","skateboarding":"Skate","crossfit":"Training","cross-training":"Training","walking":"Walking","sneaker":"Lifestyle","slip-on":"Lifestyle","sandal":"Sandal","boot":"Boot","loafer":"Lifestyle"};
         const COLORS = {"Black":["black","onyx","jet","ebony","obsidian","raven","coal","ink","shadow","noir","licorice","pitch","tripleblack","triple-black","coreblack","core-black","phantom","anthracite","soot","carbon"],"White":["white","ivory","snow","pearl","sail","cream","bone","eggshell","linen","frost","alabaster","porcelain","chalk","milk","cotton","ghost","offwhite","off-white","whisper","paper","shell","antique"],"Red":["red","crimson","scarlet","ruby","burgundy","maroon","wine","cherry","carmine","cardinal","tomato","garnet","vermillion","vermilion","brick","blood","firebrick","cranberry","raspberry","strawberry","rose","claret","mahogany","terra","cotta","sienna","auburn","rubyred","oxblood","merlot","poppy","coralred","sunsetred","chili","rubywine"],"Blue":["blue","navy","cobalt","royal","indigo","denim","sky","powder","midnight","steel","slate","sapphire","azure","thunder","ice","cornflower","periwinkle","iris","ultramarine","prussian","admiral","marine","federal","storm","glacier","arctic","aegean","obsidian-blue","turbo","polar","mistblue","oceanblue","deepblue","lightblue","darkblue","hyperblue","universityblue","carolinablue"],"Green":["green","olive","sage","forest","army","jade","emerald","mint","fern","moss","pine","volt","lime","hunter","bottle","kelly","shamrock","chartreuse","avocado","pistachio","pear","leaf","basil","seaweed","jungle","cucumber","matcha","celadon","viridian","malachite","voltgreen","neongreen","electricgreen","loden","spruce","evergreen","clover","pea","grassy","seaglass","seafoamgreen"],"Yellow":["yellow","gold","golden","mustard","lemon","canary","butter","banana","honey","sunflower","flaxen","straw","blonde","champagne","vanilla","daffodil","citrine","topaz","citrus","maize","corn","ambergold","sandgold","sulphur","mustardseed","dijon","neonyellow","electricyellow"],"Orange":["orange","amber","tangerine","apricot","rust","copper","pumpkin","saffron","coral","burnt","cinnamon","papaya","mango","melon","clay","ginger","tiger","marigold","bronze","peach","persimmon","nectarine","cantaloupe","sunset","burntorange","terracotta","carrot","kumquat"],"Violet":["purple","violet","lavender","lilac","plum","grape","mauve","amethyst","orchid","wisteria","heather","thistle","periwinkle","mulberry","eggplant","byzantium","aubergine","boysenberry","violetdust","deeppurple","royalpurple"],"Pink":["pink","blush","fuchsia","magenta","salmon","rose","bubblegum","flamingo","watermelon","peony","carnation","petal","flush","rouge","blossom","pastel","candy","lollipop","neon","cerise","hot","dusty","millennial","rosepink","powderpink","softpink","brightpink","shockpink"],"Brown":["brown","tan","beige","camel","mocha","chocolate","coffee","sand","taupe","nude","natural","khaki","wheat","stone","walnut","hazel","toffee","espresso","sepia","umber","fawn","oatmeal","biscuit","latte","ecru","buff","driftwood","chestnut","cacao","bark","leather","suede","caramel","pecan","almond","acorn","cocoa","mink","tobacco","saddle","oak","hickory","truffle","earth","mud","dune","bran"],"Gray":["gray","grey","silver","charcoal","ash","smoke","graphite","pewter","cement","concrete","cloud","wolf","pebble","flint","iron","lead","fossil","heather","marengo","dove","cool","smokey","stonegrey","stone-gray","coolgrey","cool-grey","neutralgray","neutralgrey","platinum","gunmetal"],"Turquoise":["turquoise","teal","aqua","cyan","seafoam","aquamarine","caribbean","lagoon","cerulean","peacock","ocean","pool","mintblue","tiffany","robinsegg","bluegreen","turq"],"Multicolor":["multi","multicolor","multi-color","assorted"]};
@@ -637,7 +675,21 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
           return null;
         };
         const pickType = (t) => { if (!t) return null; const l = t.toLowerCase(); for (const [kw, mapped] of Object.entries(TYPE_KEYWORDS)) { if (l.includes(kw)) return mapped; } return null; };
-        const pickColor = (t) => { if (!t) return "Multicolor"; const l = t.toLowerCase(); for (const [base, synonyms] of Object.entries(COLORS)) { if (synonyms.some((c) => l.includes(c))) return base; } return "Multicolor"; };
+        const pickColor = (t) => {
+          if (!t) return "Multicolor";
+          const normalized = t.toLowerCase().replace(/[^a-z0-9\s-]/g, " ");
+          const words = normalized.split(/\s+/).filter(Boolean);
+          const compact = normalized.replace(/[^a-z0-9]/g, "");
+          for (const [base, synonyms] of Object.entries(COLORS)) {
+            if (synonyms.some((c) => {
+              const key = String(c).toLowerCase();
+              if (words.includes(key)) return true;
+              const keyCompact = key.replace(/[^a-z0-9]/g, "");
+              return keyCompact.length >= 6 && compact.includes(keyCompact);
+            })) return base;
+          }
+          return "Multicolor";
+        };
         const looksLikeSku = (v) => v && /^[A-Z0-9]{3,12}(-[A-Z0-9]{2,6}){0,2}$/i.test(v.trim()) && v.length >= 4 && v.length <= 20;
         document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
           try {
@@ -692,8 +744,31 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         if (!r.brand) { const m = metaText.match(/\bBrand[:\s]+([^\n\r,/<]{2,40})/i); if (m) { r.brand = m[1].trim(); r.source.push("labeled"); } }
         if (!r.type) { const m = metaText.match(/\b(?:Type|Category|Sport|Usage|Department)[:\s]+([^\n\r,/<]{2,30})/i); if (m) { r.type = pickType(m[1]) || m[1].trim(); r.source.push("labeled"); } }
         if (!r.color) { const m = metaText.match(/\bColou?r[:\s]+([^\n\r,/<]{2,30})/i); if (m) r.color = m[1].split('/')[0].trim(); }
-        { const ssEl = document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]'); if (ssEl) { const t = ssEl.textContent?.trim(); if (t) { const first = t.split('/')[0].trim(); if (first) r.color = first; } } }
-        if (!r.color) { const prodArea = document.querySelector('main,[role="main"]') || document.body; for (const el of prodArea.querySelectorAll('p,span,div')) { if (el.children.length > 0) continue; const t = (el.textContent || '').trim(); if (!t || t.length > 60) continue; const cm = t.match(/^([A-Z][a-zA-Z]+(?:\/[A-Z][a-zA-Z]+)*)$/); if (cm) { const normalized = pickColor(cm[1].split('/')[0]); if (normalized !== "Multicolor") { r.color = normalized; break; } } } }
+        let flSelectedColor = null;
+        let flSelectedColorNormalized = null;
+        {
+          const styleCandidates = [
+            document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]')?.textContent?.trim() || '',
+            document.querySelector('.ColorwayStyles-field.button-field--selected,[class*="button-field--selected"]')?.getAttribute('aria-label')?.trim() || '',
+            document.querySelector('.ColorwayStyles-field.button-field--selected img[alt],[class*="button-field--selected"] img[alt]')?.getAttribute('alt')?.trim() || ''
+          ];
+          for (const candidate of styleCandidates) {
+            if (!candidate) continue;
+            const cleaned = candidate
+              .replace(/^Color\s+/i, '')
+              .replace(/\s+is selected.*$/i, '')
+              .trim();
+            const first = cleaned.split('/')[0].trim();
+            if (!first) continue;
+            flSelectedColor = first;
+            flSelectedColorNormalized = pickColor(first);
+            r.colorRaw = first;
+            r.color = flSelectedColorNormalized;
+            r.source.push("fl-selected-style-color");
+            break;
+          }
+        }
+        if (!flSelectedColorNormalized && !r.color) { const prodArea = document.querySelector('main,[role="main"]') || document.body; for (const el of prodArea.querySelectorAll('p,span,div')) { if (el.children.length > 0) continue; const t = (el.textContent || '').trim(); if (!t || t.length > 60) continue; const cm = t.match(/^([A-Z][a-zA-Z]+(?:\/[A-Z][a-zA-Z]+)*)$/); if (cm) { const normalized = pickColor(cm[1].split('/')[0]); if (normalized !== "Multicolor") { r.color = normalized; break; } } } }
         if (!r.gender) {
           const flHeader = document.querySelector('.ProductDetails-header-V2');
           if (flHeader) {
@@ -776,7 +851,8 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         if (!r.brand) r.brand = nameBrand || pickBrand(searchText) || pickBrand(metaText);
         if (r.brand) r.brand = canonicalizeBrand(r.brand);
         if (!r.type) r.type = pickType(searchText) || pickType(metaText);
-        r.color = pickColor(r.color || searchText);
+        r.color = flSelectedColorNormalized || pickColor(r.color || searchText);
+        r.colorFinal = r.color;
         if (!r.sizes.length) { const sel = document.querySelector('select[name*="size" i],select[id*="size" i],select[class*="size" i],select[data-option-name*="size" i]'); if (sel) { Array.from(sel.options).forEach((o) => { const t = o.text.trim(); if (!t || /^(select|choose|--)/i.test(t)) return; r.sizes.push(t); if (o.disabled || /out.?of.?stock|sold.?out|unavailable/i.test(o.text)) r.outOfStock.push(t); }); } }
         if (!r.sizes.length) { document.querySelectorAll('input[type="radio"][name*="size" i],input[type="radio"][data-option-value-id]').forEach((input) => { const t = (input.value || "").trim(); if (!t || /^(select|choose|--)/i.test(t) || t.length > 20) return; if (!r.sizes.includes(t)) r.sizes.push(t); if (input.classList.contains("disabled") || input.disabled) r.outOfStock.push(t); }); }
         if (!r.sizes.length) { for (const csel of ['[class*="size"] button,[class*="size"] label','[class*="swatch"] button,[class*="swatch"] label','[data-option-name*="size" i] button,[data-option-name*="size" i] label','[class*="size-selector"] button','[class*="sizebtn"]','[class*="size-btn"]']) { const els = document.querySelectorAll(csel); if (els.length > 0 && els.length < 80) { els.forEach((el) => { const t = el.textContent?.trim(); if (!t || t.length > 20 || r.sizes.includes(t)) return; r.sizes.push(t); const cls = ((el.className || "") + " " + (el.getAttribute("aria-label") || "")).toLowerCase(); const oos = el.classList.contains("disabled") || el.disabled || el.getAttribute("aria-disabled") === "true" || /disabled|out.?of.?stock|sold.?out|unavailable|not-available/i.test(cls) || window.getComputedStyle(el).textDecoration.includes("line-through"); if (oos) r.outOfStock.push(t); }); if (r.sizes.length) break; } } }
@@ -880,14 +956,21 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         //    (normal checks only need price + sizes, no image wait required).
         const flImgs = captureFullPage ? Array.from(document.querySelectorAll('img[data-id="ProductImage"]')) : [];
         if (captureFullPage) {
+          const isFL = !!document.querySelector('[class*="ProductGallery"],[class*="ProductDetails-form"],[class*="ProductDetails-tab"]');
           if (flImgs.length > 0) {
             const ready = flImgs.some(img => /^https?:\/\//.test(img.getAttribute('src') || ''));
             if (!ready) return false; // images in DOM but src not set yet — keep waiting
           } else {
             // No FL images yet — if page has FL product indicators, keep waiting
-            const isFL = !!document.querySelector('[class*="ProductGallery"],[class*="ProductDetails-form"],[class*="ProductDetails-tab"]');
             if (isFL) return false;
             // Non-FL page: fall through and capture whatever is there
+          }
+          if (isFL) {
+            const flSelectedStyleReady =
+              !!document.querySelector('.ProductDetails-form__selectedStyle,[class*="selectedStyle"]') ||
+              !!document.querySelector('.ColorwayStyles-field.button-field--selected,[class*="button-field--selected"]') ||
+              !!document.querySelector('.ColorwayStyles-field.button-field--selected img[alt],[class*="button-field--selected"] img[alt]');
+            if (!flSelectedStyleReady) return false;
           }
         }
 
@@ -1019,18 +1102,33 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
   const next = { ...monitor };
 
   try {
+    let monitorHostname = "";
+    try {
+      monitorHostname = new URL(monitor.url || "").hostname || "";
+    } catch (_) {}
+    const isFootlockerMonitor = /(^|\.)footlocker\.com\b/i.test(monitorHostname);
+    const needsFootlockerColorRefresh =
+      isFootlockerMonitor && (
+        !monitor.productData ||
+        !monitor.productData.color ||
+        !Array.isArray(monitor.productData.source) ||
+        !monitor.productData.source.includes("fl-selected-style-color")
+      );
+
     const needsFullCapture =
       !monitor.lastHtmlSnapshot ||
       !monitor.productData ||
       !monitor.productData.name ||
       !monitor.productData.sku ||
       !Array.isArray(monitor.productData.images) ||
-      !monitor.productData.images.length;
+      !monitor.productData.images.length ||
+      needsFootlockerColorRefresh;
 
     // On first run, capture from the tab the user already has open (faster,
     // already logged-in, no extra network request). Fall back to hidden tab if
     // the tab is gone or not scriptable.
-    const snapshot = needsFullCapture && currentTabId
+    const preferHiddenTabCapture = needsFootlockerColorRefresh;
+    const snapshot = needsFullCapture && currentTabId && !preferHiddenTabCapture
       ? await captureSnapshotFromCurrentTab(currentTabId, monitor).catch(() =>
           captureSnapshotInHiddenTab(monitor, true, 0, isBatch)
         )
