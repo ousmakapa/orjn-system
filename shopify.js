@@ -15,12 +15,14 @@ const SHOPIFY_DEFAULTS = {
 const SHOPIFY_CACHE_TTL_MS = 5 * 60 * 1000;
 const SHOPIFY_API_MIN_INTERVAL_MS = 520;
 const SHOPIFY_API_MAX_RETRIES = 4;
+const MAX_IMPORT_HISTORY = 100;
 let envConfigPromise = null;
 let locationsCache = null;
 let metadataCache = null;
 let productsSnapshotCache = null;
 let shopifyApiQueue = Promise.resolve();
 let nextShopifyApiRequestAt = 0;
+let productFilterMetafieldDefinitionsPromise = null;
 
 function getMonitorLogMeta(monitor = {}) {
   const pd = monitor.productData || {};
@@ -152,6 +154,7 @@ const SIZE_CHARTS = {
   Nike:   { Men: {"3.5":"35.5","4":"36","4.5":"36.5","5":"37.5","5.5":"38","6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"45.5","12":"46","12.5":"47","13":"47.5","13.5":"48","14":"48.5","14.5":"49","15":"49.5","15.5":"50","16":"50.5","16.5":"51","17":"51.5","17.5":"52","18":"52.5"}, Women: {"5":"35.5","5.5":"36","6":"36.5","6.5":"37.5","7":"38","7.5":"38.5","8":"39","8.5":"40","9":"40.5","9.5":"41","10":"42","10.5":"42.5","11":"43","11.5":"44","12":"44.5","12.5":"45","13":"45.5","13.5":"46","14":"47","14.5":"47.5","15":"48"} },
   Jordan: { Men: {"3":"35.5","3.5":"36","4":"36.5","4.5":"37.5","5":"37.5","5.5":"38","6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"45.5","12":"46","12.5":"47","13":"47.5","13.5":"48","14":"48.5","14.5":"49","15":"49.5","15.5":"50","16":"50.5","16.5":"51","17":"51.5","17.5":"52","18":"52.5"}, Women: {"5":"35.5","5.5":"36","6":"36.5","6.5":"37.5","7":"38","7.5":"38.5","8":"39","8.5":"40","9":"40.5","9.5":"41","10":"42","10.5":"42.5","11":"43","11.5":"44","12":"44.5","12.5":"45","13":"45.5","13.5":"46","14":"47","14.5":"47.5","15":"48"} },
   Adidas: { Men: {"4":"36","4.5":"36 2/3","5":"37 1/3","5.5":"38","6":"38 2/3","6.5":"39 1/3","7":"40","7.5":"40 2/3","8":"41 1/3","8.5":"42","9":"42 2/3","9.5":"43 1/3","10":"44","10.5":"44 2/3","11":"45 1/3","11.5":"46","12":"46 2/3","12.5":"47 1/3","13":"48","13.5":"48 2/3","14":"49 1/3","14.5":"50","15":"50 2/3","16":"51 1/3","17":"52 2/3","18":"53 1/3","19":"54 2/3","20":"55 2/3"}, Women: {"5":"36","5.5":"36 2/3","6":"37 1/3","6.5":"38","7":"38 2/3","7.5":"39 1/3","8":"40","8.5":"40 2/3","9":"41 1/3","9.5":"42","10":"42 2/3","10.5":"43 1/3","11":"44","11.5":"44 2/3","12":"45 1/3","12.5":"46","13":"46 2/3"} },
+  "New Balance": { Men: {"4":"36","4.5":"37","5":"37.5","5.5":"38","6":"38.5","6.5":"39.5","7":"40","7.5":"40.5","8":"41.5","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"45.5","12":"46.5","12.5":"47","13":"47.5","14":"49","15":"50","16":"51","17":"52","18":"53"}, Women: {"4":"34","5":"35","5.5":"36","6":"36.5","6.5":"37","7":"37.5","7.5":"38","8":"39","8.5":"40","9":"40.5","9.5":"41","10":"41.5","10.5":"42.5","11":"43","11.5":"43.5","12":"44","13":"45.5"} },
   Reebok: { Men: {"4":"34.5","4.5":"35","5":"36","5.5":"36.5","6":"37.5","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"45.5","12.5":"46","13":"47","13.5":"48","14":"48.5","15":"50","16":"52","17":"53.5","18":"55"}, Women: {"5.5":"34.5","6":"35","6.5":"36","7":"36.5","7.5":"37.5","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5","11.5":"43","12":"44"} },
   Puma:     { Men: {"6":"38","6.5":"38.5","7":"39","7.5":"40","8":"40.5","8.5":"41","9":"42","9.5":"42.5","10":"43","10.5":"44","11":"44.5","11.5":"45","12":"46","12.5":"46.5","13":"47","14":"48.5","15":"49.5","16":"51"}, Women: {"5.5":"35.5","6":"36","6.5":"37","7":"37.5","7.5":"38","8":"38.5","8.5":"39","9":"40","9.5":"40.5","10":"41","10.5":"42","11":"42.5"} },
   Converse: { Men: {"6":"38.5","6.5":"39","7":"40","7.5":"40.5","8":"41","8.5":"42","9":"42.5","9.5":"43","10":"44","10.5":"44.5","11":"45","11.5":"46","12":"46.5","13":"47.5","14":"49","15":"50","16":"51.5"} }
@@ -164,6 +167,7 @@ function getEuSize(usSize, brand, gender) {
   if (/nike/i.test(b)) chartBrand = "Nike";
   else if (/jordan/i.test(b)) chartBrand = "Jordan";
   else if (/adidas/i.test(b)) chartBrand = "Adidas";
+  else if (/new\s*balance/i.test(b)) chartBrand = "New Balance";
   else if (/reebok/i.test(b)) chartBrand = "Reebok";
   else if (/puma/i.test(b)) chartBrand = "Puma";
   else if (/converse/i.test(b)) chartBrand = "Converse";
@@ -327,6 +331,17 @@ async function shopifyFetch(path, options = {}) {
   return shopifyApiRequest(path, options);
 }
 
+async function shopifyGraphQL(query, variables = {}) {
+  const data = await shopifyFetch("/graphql.json", {
+    method: "POST",
+    body: JSON.stringify({ query, variables })
+  });
+  if (Array.isArray(data.errors) && data.errors.length) {
+    throw new Error(data.errors.map((error) => error.message || String(error)).join(" | "));
+  }
+  return data.data || {};
+}
+
 export async function getLocations() {
   if (isFreshCacheEntry(locationsCache)) return locationsCache.value;
   const data = await shopifyFetch("/locations.json");
@@ -350,7 +365,12 @@ export async function createProduct(product) {
             title: data.product.title || "",
             status: data.product.status || "",
             sku: baseSku,
-            variantSkus: (data.product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean),
+            variantSkus: (data.product.variants || []).map((variant) => {
+              const sku = String(variant?.sku || "").trim();
+              if (!sku) return "";
+              return sku === baseSku || !sku.startsWith(`${baseSku}-`) ? sku : sku.slice(baseSku.length + 1);
+            }).filter(Boolean),
+            rawVariantSkus: (data.product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean),
             image: data.product.images?.[0]?.src || ""
           },
           ...productsSnapshotCache.value.filter((entry) => Number(entry.id) !== Number(data.product.id))
@@ -376,7 +396,7 @@ export async function deleteProduct(productId) {
 
 async function getProductById(productId) {
   if (!productId) return null;
-  const data = await shopifyFetch(`/products/${productId}.json?fields=id,status,vendor,variants`);
+  const data = await shopifyFetch(`/products/${productId}.json?fields=id,title,body_html,status,vendor,product_type,tags,variants`);
   return data.product || null;
 }
 
@@ -386,6 +406,7 @@ async function updateProductStatus(productId, status) {
     method: "PUT",
     body: JSON.stringify({ product: { id: productId, status } })
   });
+  invalidateShopifyCaches({ products: true });
   return data.product || null;
 }
 
@@ -396,6 +417,16 @@ async function updateProductVendor(productId, vendor) {
     body: JSON.stringify({ product: { id: productId, vendor } })
   });
   invalidateShopifyCaches({ metadata: true });
+  return data.product || null;
+}
+
+async function updateProductCoreFields(productId, product, { invalidateProducts = true } = {}) {
+  if (!productId || !product) return null;
+  const data = await shopifyFetch(`/products/${productId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({ product: { id: productId, ...product } })
+  });
+  invalidateShopifyCaches({ metadata: true, products: invalidateProducts });
   return data.product || null;
 }
 
@@ -454,6 +485,7 @@ function findCachedProductBySkuPrefix(baseSku) {
   if (!baseSku || !isFreshCacheEntry(productsSnapshotCache)) return null;
   return productsSnapshotCache.value.find((product) =>
     product.sku === baseSku ||
+    (product.rawVariantSkus || []).some((sku) => sku === baseSku || sku.startsWith(`${baseSku}-`)) ||
     (product.variantSkus || []).some((sku) => sku === baseSku || sku.startsWith(`${baseSku}-`))
   ) || null;
 }
@@ -513,6 +545,234 @@ function matchExisting(value, list) {
 }
 
 // ── SKU → Shopify product ID mapping ──────────────────────────────────────
+function cleanFilterValue(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function uniqueCaseInsensitive(values) {
+  const seen = new Set();
+  return values
+    .map(cleanFilterValue)
+    .filter(Boolean)
+    .filter((value) => {
+      const key = value.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function getGenderFilterValues(pd = {}) {
+  const gender = cleanFilterValue(pd.gender || "Not defined");
+  const genderDisplay = cleanFilterValue(pd.genderDisplay || gender);
+  if (!genderDisplay || genderDisplay === "Not defined") return [];
+  if (genderDisplay === "Both" || /unisex/i.test(genderDisplay)) return ["Men", "Women"];
+  return [genderDisplay];
+}
+
+function buildProductFilterData(pd = {}, meta = {}) {
+  const brand = canonicalizeBrand(pd.brand || "");
+  const productType = matchExisting(cleanFilterValue(pd.type), meta.types || []);
+  const rawColor = cleanFilterValue(pd.color || pd.colorFinal || pd.colorRaw || "");
+  const normalizedColor = rawColor ? normalizeColor(rawColor) : "";
+  const genderValues = getGenderFilterValues(pd);
+  const colorValues = normalizedColor ? [normalizedColor] : [];
+  const typeValues = productType ? [productType] : [];
+  const rawTags = uniqueCaseInsensitive([
+    ...genderValues,
+    ...colorValues,
+    ...typeValues
+  ]);
+  const tags = rawTags.map((tag) => matchExisting(tag, meta.tags || []));
+  const metafields = [
+    genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
+    colorValues.length ? { namespace: "custom", key: "color", value: colorValues[0], type: "single_line_text_field" } : null,
+    productType ? { namespace: "custom", key: "product_type", value: productType, type: "single_line_text_field" } : null
+  ].filter(Boolean);
+  return { brand, productType, tags, metafields };
+}
+
+function parseShopifyTags(tags) {
+  if (Array.isArray(tags)) return tags.map(cleanFilterValue).filter(Boolean);
+  return String(tags || "").split(",").map(cleanFilterValue).filter(Boolean);
+}
+
+function isManagedFilterTag(tag, filterTags = []) {
+  const value = cleanFilterValue(tag);
+  if (!value) return false;
+  if (/^(gender|color|type):\s*/i.test(value)) return true;
+  return filterTags.some((filterTag) => filterTag.toLowerCase() === value.toLowerCase());
+}
+
+function mergeProductTags(existingTags, filterTags) {
+  return uniqueCaseInsensitive([
+    ...parseShopifyTags(existingTags).filter((tag) => !isManagedFilterTag(tag, filterTags)),
+    ...filterTags
+  ]).join(", ");
+}
+
+function buildProductMetadataPayload(monitor = {}, product = {}, filterData = {}, { includeContent = false } = {}) {
+  const pd = monitor.productData || {};
+  const payload = {
+    vendor: filterData.brand || product.vendor || "",
+    product_type: filterData.productType || product.product_type || "",
+    tags: mergeProductTags(product.tags, filterData.tags || [])
+  };
+  if (includeContent) {
+    payload.title = pd.name || monitor.name || product.title || "Imported Product";
+    payload.body_html = pd.description ? `<p>${pd.description}</p>` : (product.body_html || "");
+  }
+  return payload;
+}
+
+const PRODUCT_FILTER_METAFIELD_DEFINITIONS = [
+  { namespace: "custom", key: "gender", name: "Gender" },
+  { namespace: "custom", key: "color", name: "Color" },
+  { namespace: "custom", key: "product_type", name: "Product type" }
+];
+
+function getMetafieldDefinitionUserErrors(payload) {
+  const errors =
+    payload?.metafieldDefinitionCreate?.userErrors ||
+    payload?.metafieldDefinitionUpdate?.userErrors ||
+    [];
+  return errors.map((error) => error.message || String(error)).filter(Boolean);
+}
+
+async function getProductMetafieldDefinition(namespace, key) {
+  const data = await shopifyGraphQL(`
+    query ProductMetafieldDefinition($namespace: String!, $key: String!) {
+      metafieldDefinitions(first: 1, ownerType: PRODUCT, namespace: $namespace, key: $key) {
+        nodes { id namespace key }
+      }
+    }
+  `, { namespace, key });
+  return data.metafieldDefinitions?.nodes?.[0] || null;
+}
+
+async function createProductMetafieldDefinition(definition) {
+  const payload = {
+    namespace: definition.namespace,
+    key: definition.key,
+    name: definition.name,
+    ownerType: "PRODUCT",
+    type: "single_line_text_field",
+    access: {
+      storefront: "PUBLIC_READ"
+    }
+  };
+
+  try {
+    const data = await shopifyGraphQL(`
+      mutation CreateProductMetafieldDefinition($definition: MetafieldDefinitionInput!) {
+        metafieldDefinitionCreate(definition: $definition) {
+          createdDefinition { id namespace key }
+          userErrors { field message code }
+        }
+      }
+    `, { definition: payload });
+    const errors = getMetafieldDefinitionUserErrors(data);
+    if (errors.length && !errors.some((message) => /already exists/i.test(message))) {
+      throw new Error(errors.join(" | "));
+    }
+    return data.metafieldDefinitionCreate?.createdDefinition || null;
+  } catch (error) {
+    const simplePayload = {
+      namespace: definition.namespace,
+      key: definition.key,
+      name: definition.name,
+      ownerType: "PRODUCT",
+      type: "single_line_text_field"
+    };
+    const data = await shopifyGraphQL(`
+      mutation CreateProductMetafieldDefinition($definition: MetafieldDefinitionInput!) {
+        metafieldDefinitionCreate(definition: $definition) {
+          createdDefinition { id namespace key }
+          userErrors { field message code }
+        }
+      }
+    `, { definition: simplePayload });
+    const errors = getMetafieldDefinitionUserErrors(data);
+    if (errors.length && !errors.some((message) => /already exists/i.test(message))) {
+      throw new Error(errors.join(" | "));
+    }
+    return data.metafieldDefinitionCreate?.createdDefinition || null;
+  }
+}
+
+async function updateProductMetafieldDefinitionAccess(id) {
+  if (!id) return null;
+  try {
+    const data = await shopifyGraphQL(`
+      mutation UpdateProductMetafieldDefinition($id: ID!, $definition: MetafieldDefinitionUpdateInput!) {
+        metafieldDefinitionUpdate(id: $id, definition: $definition) {
+          updatedDefinition { id namespace key }
+          userErrors { field message code }
+        }
+      }
+    `, {
+      id,
+      definition: {
+        access: {
+          storefront: "PUBLIC_READ"
+        }
+      }
+    });
+    const errors = getMetafieldDefinitionUserErrors(data);
+    if (errors.length) throw new Error(errors.join(" | "));
+    return data.metafieldDefinitionUpdate?.updatedDefinition || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function ensureProductFilterMetafieldDefinitions() {
+  if (productFilterMetafieldDefinitionsPromise) return productFilterMetafieldDefinitionsPromise;
+  productFilterMetafieldDefinitionsPromise = (async () => {
+    for (const definition of PRODUCT_FILTER_METAFIELD_DEFINITIONS) {
+      const existing = await getProductMetafieldDefinition(definition.namespace, definition.key);
+      if (existing?.id) {
+        await updateProductMetafieldDefinitionAccess(existing.id);
+      } else {
+        await createProductMetafieldDefinition(definition);
+      }
+    }
+  })();
+  try {
+    await productFilterMetafieldDefinitionsPromise;
+  } catch (error) {
+    productFilterMetafieldDefinitionsPromise = null;
+    throw error;
+  }
+}
+
+async function upsertProductMetafields(productId, metafields = []) {
+  if (!productId || !metafields.length) return [];
+  await ensureProductFilterMetafieldDefinitions();
+  const ownerId = `gid://shopify/Product/${productId}`;
+  const data = await shopifyGraphQL(`
+    mutation SetProductMetafields($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields { id namespace key value }
+        userErrors { field message code }
+      }
+    }
+  `, {
+    metafields: metafields.map((metafield) => ({
+      ownerId,
+      namespace: metafield.namespace,
+      key: metafield.key,
+      type: metafield.type,
+      value: String(metafield.value ?? "")
+    }))
+  });
+  const errors = data.metafieldsSet?.userErrors || [];
+  if (errors.length) {
+    throw new Error(errors.map((error) => error.message || String(error)).join(" | "));
+  }
+  return data.metafieldsSet?.metafields || [];
+}
+
 async function getSkuMapping() {
   const { shopifySkuMapping } = await chrome.storage.local.get("shopifySkuMapping");
   return shopifySkuMapping || {};
@@ -563,7 +823,12 @@ export async function getShopifyProductsSnapshot() {
         title: product.title || "",
         status: product.status || "",
         sku: baseSku || "",
-        variantSkus: (product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean),
+        variantSkus: (product.variants || []).map((variant) => {
+          const sku = String(variant?.sku || "").trim();
+          if (!sku) return "";
+          return sku === baseSku || !baseSku || !sku.startsWith(`${baseSku}-`) ? sku : sku.slice(baseSku.length + 1);
+        }).filter(Boolean),
+        rawVariantSkus: (product.variants || []).map((variant) => String(variant?.sku || "").trim()).filter(Boolean),
         image: product.images?.[0]?.src || ""
       });
     }
@@ -760,6 +1025,166 @@ export async function updateShopifyForMonitor(monitor, liveData) {
   }
 }
 
+export async function reapplyMonitorDataToShopify(monitor, liveData = {}, options = {}) {
+  const { createIfMissing = true } = options;
+  if (!await isConnected()) throw new Error("Connect Shopify first.");
+  const pd = monitor?.productData || {};
+  const baseSku = String(pd.sku || "").trim();
+  if (!baseSku) throw new Error("Monitor has no SKU.");
+
+  const mapping = await getSkuMapping();
+  let productId = monitor?.shopifyProductId || mapping[baseSku];
+  let product = null;
+
+  if (productId) {
+    try {
+      product = await getProductById(productId);
+      if (product && mapping[baseSku] !== product.id) {
+        mapping[baseSku] = product.id;
+        await saveSkuMapping(mapping);
+      }
+    } catch (_) {
+      productId = null;
+    }
+  }
+
+  if (!product) {
+    product = await findProductBySkuPrefix(baseSku);
+    if (product) {
+      mapping[baseSku] = product.id;
+      await saveSkuMapping(mapping);
+    }
+  }
+
+  if (!product?.id && createIfMissing) {
+    const created = await importMonitorProduct(
+      {
+        ...monitor,
+        shopifyProductId: null,
+        lastExtractedData: liveData && typeof liveData === "object" ? liveData : (monitor?.lastExtractedData || {})
+      },
+      { mapping, meta: await getShopifyMetadata().catch(() => ({ vendors: [], types: [], tags: [] })), locations: await getLocations().catch(() => []) }
+    );
+    return { id: created.id, created: true };
+  }
+  if (!product?.id) {
+    throw new Error(`No existing Shopify product found for SKU ${baseSku}`);
+  }
+
+  const meta = await getShopifyMetadata().catch(() => ({ vendors: [], types: [], tags: [] }));
+  const filterData = buildProductFilterData(pd, meta);
+
+  const productPayload = buildProductMetadataPayload(monitor, product, filterData, { includeContent: true });
+
+  await updateProductCoreFields(product.id, productPayload);
+  await upsertProductMetafields(product.id, [
+    ...filterData.metafields,
+    {
+      namespace: "custom",
+      key: "notes",
+      value: monitor.url || "",
+      type: "multi_line_text_field"
+    }
+  ]);
+  await updateShopifyForMonitor(
+    { ...monitor, shopifyProductId: product.id },
+    liveData && typeof liveData === "object" ? liveData : (monitor?.lastExtractedData || {})
+  );
+  return { id: product.id, created: false };
+}
+
+export async function updateMonitorShopifyMetadata(monitor, context = {}) {
+  if (!await isConnected()) throw new Error("Connect Shopify first.");
+  const pd = monitor?.productData || {};
+  const baseSku = String(pd.sku || "").trim();
+  if (!baseSku && !monitor?.shopifyProductId) throw new Error("Monitor has no SKU or Shopify product ID.");
+
+  const mapping = context.mapping || await getSkuMapping();
+  context.mapping = mapping;
+  let productId = monitor?.shopifyProductId || (baseSku ? mapping[baseSku] : null);
+  let product = null;
+
+  if (productId) {
+    product = await getProductById(productId).catch(() => null);
+    if (!product) productId = null;
+  }
+
+  if (!product && baseSku) {
+    const cached = findCachedProductBySkuPrefix(baseSku);
+    if (cached?.id) {
+      product = await getProductById(cached.id).catch(() => null);
+    }
+  }
+
+  if (!product && baseSku) {
+    product = await findProductBySkuPrefix(baseSku);
+  }
+
+  if (!product?.id) {
+    throw new Error(`No existing Shopify product found for SKU ${baseSku || monitor?.shopifyProductId}`);
+  }
+
+  if (baseSku) {
+    mapping[baseSku] = product.id;
+    await saveSkuMapping(mapping);
+  }
+
+  const meta = context.meta || await getShopifyMetadata().catch(() => ({ vendors: [], types: [], tags: [] }));
+  context.meta = meta;
+  const filterData = buildProductFilterData(pd, meta);
+  await updateProductCoreFields(
+    product.id,
+    buildProductMetadataPayload(monitor, product, filterData),
+    { invalidateProducts: false }
+  );
+  await upsertProductMetafields(product.id, [
+    ...filterData.metafields,
+    {
+      namespace: "custom",
+      key: "notes",
+      value: monitor.url || "",
+      type: "multi_line_text_field"
+    }
+  ]);
+  return { id: product.id, updated: true };
+}
+
+export async function syncMonitorShopifyStatus(monitor, desiredStatus) {
+  if (!desiredStatus || !await isConnected()) return null;
+  const baseSku = String(monitor?.productData?.sku || "").trim();
+  if (!baseSku) return null;
+
+  const mapping = await getSkuMapping();
+  let productId = Number(monitor?.shopifyProductId || mapping[baseSku] || 0);
+  let product = null;
+
+  if (productId) {
+    try {
+      product = await getProductById(productId);
+      if (product && mapping[baseSku] !== product.id) {
+        mapping[baseSku] = product.id;
+        await saveSkuMapping(mapping);
+      }
+    } catch (_) {
+      productId = 0;
+    }
+  }
+
+  if (!product) {
+    product = await findProductBySkuPrefix(baseSku);
+    if (product) {
+      mapping[baseSku] = product.id;
+      await saveSkuMapping(mapping);
+    }
+  }
+
+  if (!product?.id) return null;
+  if (String(product.status || "").toLowerCase() === String(desiredStatus).toLowerCase()) {
+    return product;
+  }
+  return updateProductStatus(product.id, desiredStatus);
+}
+
 export async function setInventoryLevel(inventoryItemId, locationId, available) {
   return shopifyFetch("/inventory_levels/set.json", {
     method: "POST",
@@ -777,6 +1202,36 @@ async function setImportHistory(history) {
   await chrome.storage.local.set({ [IMPORT_HISTORY_KEY]: history });
 }
 
+function trimImportHistoryText(value, maxLength = 1000) {
+  const text = typeof value === "string" ? value : "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}…`;
+}
+
+function compactMonitorForImportHistory(monitor) {
+  if (!monitor || typeof monitor !== "object") return monitor;
+  return {
+    ...monitor,
+    lastSnapshot: trimImportHistoryText(monitor.lastSnapshot, 1000),
+    previousSnapshot: trimImportHistoryText(monitor.previousSnapshot, 1000),
+    lastHtmlSnapshot: "",
+    previousHtmlSnapshot: "",
+    lastHtmlDiff: "",
+    initialFullPageText: "",
+    changeHistory: Array.isArray(monitor.changeHistory)
+      ? monitor.changeHistory.slice(0, 2).map((entry) => ({
+          ...entry,
+          previousText: "",
+          currentText: "",
+          previousHtml: "",
+          currentHtml: "",
+          htmlDiff: "",
+          liveChanges: Array.isArray(entry?.liveChanges) ? entry.liveChanges.slice(0, 3) : []
+        }))
+      : []
+  };
+}
+
 function normalizeImportHistory(history) {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   const seenProductIds = new Set();
@@ -787,7 +1242,11 @@ function normalizeImportHistory(history) {
     if (!productId || !importedAt || importedAt <= cutoff) continue;
     if (seenProductIds.has(productId)) continue;
     seenProductIds.add(productId);
-    result.push(entry);
+    result.push({
+      ...entry,
+      monitorData: compactMonitorForImportHistory(entry?.monitorData)
+    });
+    if (result.length >= MAX_IMPORT_HISTORY) break;
   }
   return result;
 }
@@ -893,11 +1352,39 @@ export async function importMonitorProduct(monitor, context = {}) {
   const price = live.price != null ? String(live.price) : (pd.price != null ? String(pd.price) : "0");
   const compareAt = live.compareAt != null ? String(live.compareAt) : null;
 
-  const inStock = new Set(live.inStock || []);
-  const outOfStock = new Set(live.outOfStock || []);
-  const allSizesUS = [...inStock, ...outOfStock];
+  const inStock = new Set((live.inStock || []).map((size) => String(size)));
+  const outOfStock = new Set((live.outOfStock || []).map((size) => String(size)));
+  const allSizesUS = [...new Set([...inStock, ...outOfStock])];
 
   const baseSku = pd.sku || "";
+  const relinkExistingProduct = async (existingProductId) => {
+    if (!existingProductId) return null;
+    if (baseSku) {
+      const mapping = context.mapping || await getSkuMapping();
+      context.mapping = mapping;
+      mapping[baseSku] = existingProductId;
+      await saveSkuMapping(mapping);
+    }
+    const existingProduct = await getProductById(existingProductId).catch(() => null);
+    const filterData = buildProductFilterData(pd, meta);
+    await updateProductCoreFields(
+      existingProductId,
+      buildProductMetadataPayload(monitor, existingProduct || {}, filterData, { includeContent: true })
+    );
+    await upsertProductMetafields(existingProductId, [
+      ...filterData.metafields,
+      {
+        namespace: "custom",
+        key: "notes",
+        value: monitor.url || "",
+        type: "multi_line_text_field"
+      }
+    ]);
+    const updatedProduct = await getProductById(existingProductId).catch(() => null);
+    return updatedProduct
+      ? { ...updatedProduct, relinkedExisting: true }
+      : { id: existingProductId, relinkedExisting: true };
+  };
   if (monitor.shopifyProductId) {
     throw new Error(`Already imported to Shopify for SKU ${baseSku || pd.name || monitor.name}`);
   }
@@ -916,33 +1403,34 @@ export async function importMonitorProduct(monitor, context = {}) {
       existing = await findProductBySkuPrefix(baseSku);
     }
     if (existing?.id) {
-      throw new Error(`Already imported to Shopify for SKU ${baseSku}`);
+      return relinkExistingProduct(existing.id);
     }
   }
-  const brand = canonicalizeBrand(pd.brand || "");
-  const gender = pd.gender || "Not defined";
-  const genderDisplay = pd.genderDisplay || gender;
+  const filterData = buildProductFilterData(pd, meta);
+  const brand = filterData.brand;
   const sizeGender = pd.extractedGender || "";
-  const productType = matchExisting(pd.type || "", meta.types);
-  const normalizedColor = normalizeColor(pd.color);
 
-  // Always keep the extracted color as a Shopify tag.
-  // If a normalized color also exists, include it too unless it's the same tag ignoring case.
-  const genderTags =
-    genderDisplay === "Both"
-      ? ["Men", "Women"]
-      : (genderDisplay && genderDisplay !== "Not defined" ? [genderDisplay] : []);
-  const rawTags = [...genderTags, normalizedColor]
-    .filter(Boolean)
-    .filter((tag, index, arr) =>
-      arr.findIndex((value) => String(value).toLowerCase() === String(tag).toLowerCase()) === index
-    );
-  const tags = rawTags.map((tag) => matchExisting(tag, meta.tags));
+  const sizeEntries = allSizesUS.map((usSize) => {
+    const usLabel = String(usSize);
+    const euSize = getEuSize(usLabel, brand, sizeGender);
+    return {
+      usSize: usLabel,
+      euSize: euSize ? String(euSize) : "",
+      preferredLabel: euSize ? String(euSize) : usLabel
+    };
+  });
+  const preferredLabelCounts = new Map();
+  sizeEntries.forEach((entry) => {
+    preferredLabelCounts.set(entry.preferredLabel, (preferredLabelCounts.get(entry.preferredLabel) || 0) + 1);
+  });
+  sizeEntries.forEach((entry) => {
+    entry.option1 = preferredLabelCounts.get(entry.preferredLabel) > 1
+      ? (entry.euSize ? `${entry.euSize} / US ${entry.usSize}` : `US ${entry.usSize}`)
+      : entry.preferredLabel;
+  });
 
-  const variants = allSizesUS.length
-    ? allSizesUS.map(usSize => {
-        const euSize = getEuSize(usSize, brand, sizeGender);
-        const option1 = euSize ? String(euSize) : usSize;
+  const variants = sizeEntries.length
+    ? sizeEntries.map(({ usSize, option1 }) => {
         const variantSku = baseSku ? `${baseSku}-${usSize}` : usSize;
         const variant = {
           option1,
@@ -971,24 +1459,25 @@ export async function importMonitorProduct(monitor, context = {}) {
     title: pd.name || monitor.name || "Imported Product",
     body_html: pd.description ? `<p>${pd.description}</p>` : "",
     vendor: brand,
-    product_type: productType,
-    tags: tags.join(", "),
+    product_type: filterData.productType,
+    tags: filterData.tags.join(", "),
     status: "active",
     published_scope: "global",
-    options: allSizesUS.length ? [{ name: "Size" }] : [],
+    options: sizeEntries.length ? [{ name: "Size" }] : [],
     variants,
-    images: (pd.images || []).map(src => ({ src })),
-    metafields: [
-      {
-        namespace: "custom",
-        key: "notes",
-        value: monitor.url || "",
-        type: "multi_line_text_field"
-      }
-    ]
+    images: (pd.images || []).map(src => ({ src }))
   };
 
   const created = await createProduct(product);
+  await upsertProductMetafields(created.id, [
+    ...filterData.metafields,
+    {
+      namespace: "custom",
+      key: "notes",
+      value: monitor.url || "",
+      type: "multi_line_text_field"
+    }
+  ]);
 
   // Cache SKU → product ID for future auto-updates
   if (baseSku) {
@@ -1003,12 +1492,9 @@ export async function importMonitorProduct(monitor, context = {}) {
   context.locations = locations;
   if (locations.length && created.variants) {
       await Promise.all(created.variants.map(async (variant) => {
-      const usSize = allSizesUS.find(us => {
-        const eu = getEuSize(us, brand, sizeGender);
-        return eu ? String(eu) === variant.option1 : us === variant.option1;
-      });
-      const qty = usSize
-        ? (inStock.has(usSize) ? 10 : 0)
+      const sizeEntry = sizeEntries.find((entry) => entry.option1 === variant.option1);
+      const qty = sizeEntry?.usSize
+        ? (inStock.has(sizeEntry.usSize) ? 10 : 0)
         : (variant.inventory_quantity ?? 10);
       if (qty <= 0) return;
       await Promise.all(locations.map((location) =>
@@ -1020,7 +1506,7 @@ export async function importMonitorProduct(monitor, context = {}) {
   // Save to import history for undo
   await pushImportHistory({
     shopifyProductId: created.id,
-    monitorData: monitor,
+    monitorData: compactMonitorForImportHistory(monitor),
     importedAt: new Date().toISOString(),
     monitorName: monitor.name
   });

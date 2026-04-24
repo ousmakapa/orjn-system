@@ -1,5 +1,5 @@
 import { buildDiffRows, summarizeDiff, getLogs, clearLogs, addLog, canonicalizeBrand } from "./shared.js";
-import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache, getFullyOutOfStockProductIds, primeImportCaches } from "./shopify.js";
+import { isConnected, connectShopify, disconnectShopify, verifyConnection, importMonitorProduct, undoLastImport, getRecentImports, getShopifyMetadata, getShopifyProductsSnapshot, deleteShopifyProducts, deleteProduct, clearShopifyProductsSnapshotCache, getFullyOutOfStockProductIds, primeImportCaches, reapplyMonitorDataToShopify, updateMonitorShopifyMetadata } from "./shopify.js";
 
 const monitorGrid = document.getElementById("monitor-grid");
 const monitorDetail = document.getElementById("monitor-detail");
@@ -8,6 +8,7 @@ const searchInput = document.getElementById("dashboard-search");
 const changedOnlyInput = document.getElementById("changed-only");
 const bulkCheckBtn = document.getElementById("bulk-check");
 const bulkImportBtn = document.getElementById("bulk-import");
+const bulkUpdateMetadataBtn = document.getElementById("bulk-update-metadata");
 const stopImportBtn = document.getElementById("stop-import");
 const bulkDeleteBtn = document.getElementById("bulk-delete");
 const bulkDeleteShopifyBtn = document.getElementById("bulk-delete-shopify");
@@ -21,6 +22,7 @@ const filterType = document.getElementById("filter-type");
 const filterSort = document.getElementById("filter-sort");
 const openShopifyUnmonitoredBtn = document.getElementById("open-shopify-unmonitored-btn");
 const openMonitorNotShopifyBtn = document.getElementById("open-monitor-not-shopify-btn");
+const openMonitorDuplicatesBtn = document.getElementById("open-monitor-duplicates-btn");
 const openShopifyOutOfStockBtn = document.getElementById("open-shopify-out-of-stock-btn");
 const checkShopifyOutOfStockBtn = document.getElementById("check-shopify-out-of-stock-btn");
 const shopifyUnmonitoredPanel = document.getElementById("shopify-unmonitored-panel");
@@ -40,6 +42,12 @@ const monitorNotShopifyClearSelectedBtn = document.getElementById("monitor-not-s
 const monitorNotShopifyClearBtn = document.getElementById("monitor-not-shopify-clear-btn");
 const closeMonitorNotShopifyBtn = document.getElementById("close-monitor-not-shopify-btn");
 let monitorNotShopifyDeleteDuplicatesBtn = document.getElementById("monitor-not-shopify-delete-duplicates-btn");
+const monitorDuplicatesPanel = document.getElementById("monitor-duplicates-panel");
+const monitorDuplicatesStatus = document.getElementById("monitor-duplicates-status");
+const monitorDuplicatesList = document.getElementById("monitor-duplicates-list");
+const monitorDuplicatesRefreshBtn = document.getElementById("monitor-duplicates-refresh-btn");
+const monitorDuplicatesDeleteBtn = document.getElementById("monitor-duplicates-delete-btn");
+const closeMonitorDuplicatesBtn = document.getElementById("close-monitor-duplicates-btn");
 const skuDuplicatesPanel = document.getElementById("sku-duplicates-panel");
 const skuDuplicatesStatus = document.getElementById("sku-duplicates-status");
 const skuDuplicatesList = document.getElementById("sku-duplicates-list");
@@ -60,10 +68,14 @@ let canCheck = false; // requires Shopify connection OR test mode
 let autoEnabled = true; // mirrors chrome.storage autoIntervalEnabled
 let shopifyUnmonitoredProducts = [];
 let monitorNotShopifyMonitors = [];
+let monitorOnlyMonitorIds = null;
 let shopifyOutOfStockMonitorIds = null;
 let monitorDuplicateSkuGroups = [];
 let shopifyProductCount = null;
 let shopifyUniqueSkuCount = null;
+let shopifyMissingSkuCount = null;
+let shopifyMissingSkuProducts = [];
+let shopifySkuGapDetails = [];
 let outOfStockSectionHidden = false;
 let lastOutOfStockSignature = "";
 const dismissedOutOfStockMonitorIds = new Set();
@@ -71,7 +83,7 @@ const selectedShopifyUnmonitoredIds = new Set();
 const selectedMonitorNotShopifyIds = new Set();
 const selectedDuplicateMonitorIds = new Set();
 const selectedDuplicateIds = new Set();
-let skuDuplicateGroups = []; // [{ sku, keepProduct, keepReason, extraProducts }]
+let skuDuplicateGroups = []; // [{ sku, keepProduct, keepReason, extraProducts, protectedProducts, blockedReasons }]
 let skuDuplicatesAdminBase = ""; // https://admin.shopify.com/store/{name}/products
 let dashboardStorageRefreshTimer = null;
 let dashboardUiStateSaveTimer = null;
@@ -121,7 +133,11 @@ function timeAgo(iso) {
 }
 
 function getDomain(url) {
-  try { return new URL(url).hostname; } catch { return url; }
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return String(url || "");
+  }
 }
 
 function normalizeSku(value) {
@@ -132,6 +148,10 @@ function getProductSkuSet(product) {
   const skus = new Set();
   const baseSku = normalizeSku(product?.sku);
   if (baseSku) skus.add(baseSku);
+  for (const sku of (product?.rawVariantSkus || [])) {
+    const normalized = normalizeSku(sku);
+    if (normalized) skus.add(normalized);
+  }
   for (const sku of (product?.variantSkus || [])) {
     const normalized = normalizeSku(sku);
     if (normalized) skus.add(normalized);
@@ -200,10 +220,13 @@ async function restoreDashboardUiState() {
   const { [DASHBOARD_UI_STATE_KEY]: state } = await chrome.storage.local.get(DASHBOARD_UI_STATE_KEY);
   if (!state || typeof state !== "object") return;
 
-  searchInput.value = state.search || "";
-  changedOnlyInput.checked = !!state.changedOnly;
-  filterBrand.value = state.filterBrand || "";
-  filterType.value = state.filterType || "";
+  // Do not restore transient dashboard filters across sessions.
+  // Persisting them has been causing large portions of the grid to look "missing"
+  // when the user reopens the dashboard later.
+  searchInput.value = "";
+  changedOnlyInput.checked = false;
+  filterBrand.value = "";
+  filterType.value = "";
   filterSort.value = state.filterSort || "created-desc";
 
   collapsedGroups.clear();
@@ -218,12 +241,8 @@ async function restoreDashboardUiState() {
     }
   }
 
+  // Group-level pills are also treated as transient view state.
   groupFilters.clear();
-  for (const entry of (state.groupFilters || [])) {
-    if (Array.isArray(entry) && entry.length === 2) {
-      groupFilters.set(entry[0], entry[1] || {});
-    }
-  }
 
   outOfStockSectionHidden = !!state.outOfStockSectionHidden;
   dismissedOutOfStockMonitorIds.clear();
@@ -266,29 +285,97 @@ function getProductPrimarySku(product) {
   return normalizeSku(product?.sku) || [...getProductSkuSet(product)][0] || "";
 }
 
+function getShopifyDuplicateProductCount(products = []) {
+  const safeProducts = Array.isArray(products) ? products : [];
+  const productsWithSku = safeProducts.filter((product) => getProductPrimarySku(product));
+  const uniqueSkus = new Set(productsWithSku.map(getProductPrimarySku).filter(Boolean));
+  return productsWithSku.length - uniqueSkus.size;
+}
+
+function getShopifyMissingSkuCount(products = []) {
+  const safeProducts = Array.isArray(products) ? products : [];
+  return safeProducts.filter((product) => !getProductPrimarySku(product)).length;
+}
+
+function getMonitorUniqueSkuCount(monitors = allMonitors) {
+  return new Set(
+    (Array.isArray(monitors) ? monitors : [])
+      .map((monitor) => normalizeSku(monitor?.productData?.sku))
+      .filter(Boolean)
+  ).size;
+}
+
+function getMonitorMissingSkuCount(monitors = allMonitors) {
+  return (Array.isArray(monitors) ? monitors : []).filter((monitor) => !normalizeSku(monitor?.productData?.sku)).length;
+}
+
+function getMonitorsMissingSku(monitors = allMonitors) {
+  return (Array.isArray(monitors) ? monitors : []).filter((monitor) => !normalizeSku(monitor?.productData?.sku));
+}
+
+function applyStoredGroupFilter(groupKey, monitors) {
+  const filters = groupFilters.get(groupKey) || {};
+  let result = Array.isArray(monitors) ? monitors : [];
+  if (filters.brand) {
+    result = result.filter((monitor) => (getBrandFromMonitor(monitor) || "").toLowerCase() === filters.brand.toLowerCase());
+  }
+  if (filters.type) {
+    result = result.filter((monitor) => (monitor.productData?.type || "").toLowerCase() === filters.type.toLowerCase());
+  }
+  return result;
+}
+
+function isMonitorMissingFromShopify(monitor) {
+  if (monitor?.shopifyProductId) {
+    return false;
+  }
+  if (monitorOnlyMonitorIds instanceof Set) {
+    return monitorOnlyMonitorIds.has(String(monitor?.id || ""));
+  }
+  return true;
+}
+
+function getNew48hMonitors(monitors, now = Date.now()) {
+  const HOURS_48 = 48 * 60 * 60 * 1000;
+  return (Array.isArray(monitors) ? monitors : []).filter((monitor) =>
+    monitor.createdAt &&
+    isMonitorMissingFromShopify(monitor) &&
+    !monitor.hiddenFromNew48h &&
+    (now - new Date(monitor.createdAt).getTime()) < HOURS_48
+  );
+}
+
 function renderStats(monitors) {
+  const totalMonitorCount = Array.isArray(allMonitors) ? allMonitors.length : 0;
+  const uniqueMonitorSkuCount = getMonitorUniqueSkuCount(allMonitors);
+  const missingMonitorSkuCount = getMonitorMissingSkuCount(allMonitors);
   const changed = monitors.filter((m) => m.changeCount > 0).length;
-  const errors = monitors.filter((m) => m.status === "error").length;
+  const errors = applyStoredGroupFilter("__errors__", monitors.filter((m) => m.status === "error")).length;
   const dupeCount = (shopifyProductCount != null && shopifyUniqueSkuCount != null)
-    ? shopifyProductCount - shopifyUniqueSkuCount
+    ? Math.max(0, shopifyProductCount - shopifyUniqueSkuCount - (shopifyMissingSkuCount || 0))
     : 0;
   const shopifyCountLabel = shopifyProductCount == null ? "..." : shopifyProductCount;
   const shopifySkuLabel = shopifyUniqueSkuCount == null ? "..." : shopifyUniqueSkuCount;
+  const shopifyMissingLabel = shopifyMissingSkuCount == null ? "..." : shopifyMissingSkuCount;
   const shopifyProductsCard = shopifyProductCount == null
     ? createStatCard("Shopify Products", "...")
     : dupeCount > 0
       ? `<article class="stat-card" title="${dupeCount} product${dupeCount !== 1 ? "s" : ""} share a SKU with another Shopify product (duplicates). The diff buttons compare by unique SKU."><span>Shopify Products</span><strong>${shopifyCountLabel}</strong><div style="font-size:11px;color:#ef4444;margin-top:2px">+${dupeCount} duplicate${dupeCount !== 1 ? "s" : ""}</div></article>`
+      : (shopifyMissingSkuCount || 0) > 0
+        ? `<article class="stat-card" title="${shopifyMissingLabel} Shopify product${shopifyMissingLabel !== "1" ? "s" : ""} do not have a SKU."><span>Shopify Products</span><strong>${shopifyCountLabel}</strong><div style="font-size:11px;color:#ef4444;margin-top:2px">+${shopifyMissingLabel} missing SKU</div></article>`
       : createStatCard("Shopify Products", shopifyCountLabel);
-  const changedActionsHtml = changed > 0 ? `
-    <div class="stat-card-actions">
-      <button class="stat-action-btn" data-stat-action="filter-changed">Filter</button>
-      <button class="stat-action-btn" data-stat-action="reset-changed">Reset all</button>
-    </div>` : "";
-  dashboardStats.innerHTML = [
-    createStatCard("Monitors", monitors.length),
-    shopifyProductsCard,
-    createStatCard("Shopify Unique SKUs", shopifySkuLabel),
-    `<article class="stat-card warm"><span>Changed</span><strong>${changed}</strong>${changedActionsHtml}</article>`,
+    const changedActionsHtml = changed > 0 ? `
+      <div class="stat-card-actions">
+        <button class="stat-action-btn" data-stat-action="filter-changed">Filter</button>
+        <button class="stat-action-btn" data-stat-action="mark-read">Mark all as read</button>
+      </div>` : "";
+    dashboardStats.innerHTML = [
+      createStatCard("Monitors", totalMonitorCount),
+      createStatCard("Monitor Unique SKUs", uniqueMonitorSkuCount),
+      createStatCard("Monitors Without SKU", missingMonitorSkuCount),
+      shopifyProductsCard,
+      createStatCard("Shopify Unique SKUs", shopifySkuLabel),
+      `<article class="stat-card warm"><span>Changed</span><strong>${changed}</strong>${changedActionsHtml}</article>`,
     createStatCard("Errors", errors, errors ? "danger" : "")
   ].join("");
 }
@@ -300,10 +387,14 @@ dashboardStats.addEventListener("click", async (e) => {
     changedOnlyInput.checked = !changedOnlyInput.checked;
     renderGrid(getFilteredMonitors());
   }
-  if (action === "reset-changed") {
+  if (action === "mark-read") {
     e.target.textContent = "…";
     e.target.disabled = true;
     await chrome.runtime.sendMessage({ type: "reset-all-change-counts" });
+    if (changedOnlyInput.checked) {
+      changedOnlyInput.checked = false;
+      scheduleSaveDashboardUiState();
+    }
     await silentRefresh();
   }
 });
@@ -662,6 +753,8 @@ function renderDetail(monitor) {
     : `<div class="empty-panel">No changes recorded yet.</div>`;
 
   const hasSnapshot = !!monitor.lastHtmlSnapshot;
+  const canManualSyncShopify = !!(monitor.shopifyProductId || monitor.productData?.sku);
+  const manualSyncLabel = monitor.shopifyProductId ? "Update Shopify" : "Find & update Shopify";
 
   monitorDetail.innerHTML = `
     <div style="display:flex;justify-content:flex-end">
@@ -735,6 +828,7 @@ function renderDetail(monitor) {
     <div class="card-actions">
       <button data-save="${monitor.id}" class="primary">Save</button>
       <button data-refresh="${monitor.id}" class="secondary"${canCheck ? "" : " disabled"}>Check now</button>
+      <button data-resync-shopify="${monitor.id}" class="secondary"${canManualSyncShopify ? "" : " disabled"} title="Push the current monitor data back to Shopify">${manualSyncLabel}</button>
       <button class="inline-button back-to-monitor-btn" title="Scroll to monitor card">&#8593; Back to card</button>
       <button data-delete="${monitor.id}" class="inline-button danger">Delete</button>
     </div>
@@ -813,7 +907,6 @@ function renderGrid(monitors) {
   }
 
   const NOW = Date.now();
-  const HOURS_48 = 48 * 60 * 60 * 1000;
   const NEW_GROUP_KEY = "__new48h__";
   const ERROR_GROUP_KEY = "__errors__";
   // Apply group-level brand/type filter then paginate
@@ -851,7 +944,13 @@ function renderGrid(monitors) {
     const collapsed = collapsedGroups.has(key);
     const arrow = collapsed ? "&#9654;" : "&#9660;";
     const filterPills = buildGroupFilterPills(key, allMons);
-    const filtered = applyGroupFilter(key, allMons);
+    let filtered = applyGroupFilter(key, allMons);
+    const groupFilterState = groupFilters.get(key) || {};
+    if (!filtered.length && allMons.length && (groupFilterState.brand || groupFilterState.type)) {
+      groupFilters.delete(key);
+      scheduleSaveDashboardUiState();
+      filtered = allMons;
+    }
     const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const currentPage = Math.min(groupPages.get(key) || 0, totalPages - 1);
     groupPages.set(key, currentPage);
@@ -877,7 +976,7 @@ function renderGrid(monitors) {
     </div>`;
   }
 
-  const newMons = monitors.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48);
+  const newMons = getNew48hMonitors(monitors, NOW);
   const errorMons = monitors.filter((m) => m.status === "error");
   const outOfStockIdSet = getVisibleOutOfStockMonitorIds(monitors);
   const shopifyOutOfStockMons = [...outOfStockIdSet].map((id) => monitors.find((m) => m.id === id)).filter(Boolean);
@@ -939,11 +1038,17 @@ function updateBulkBtn() {
   bulkDeleteBtn.disabled = n === 0 || importInProgress;
   bulkDeleteShopifyBtn.disabled = n === 0 || importInProgress;
   bulkImportBtn.disabled = n === 0 || importInProgress;
+  bulkUpdateMetadataBtn.disabled = importInProgress || !allMonitors.some((monitor) => monitor.shopifyProductId || monitor.productData?.sku);
   bulkCheckBtn.textContent = n > 0 ? `Check selected (${n})` : "Check selected";
   bulkDeleteBtn.textContent = n > 0 ? `Delete selected (${n})` : "Delete selected";
   bulkDeleteShopifyBtn.textContent = n > 0 ? `Delete from Shopify + Monitors (${n})` : "Delete from Shopify + Monitors";
   if (!importInProgress) {
     bulkImportBtn.textContent = n > 0 ? `Import to Shopify (${n})` : "Import to Shopify";
+    const selectedMetadataCount = allMonitors.filter((monitor) =>
+      checkedIds.has(monitor.id) && (monitor.shopifyProductId || monitor.productData?.sku)
+    ).length;
+    const metadataCount = selectedMetadataCount || allMonitors.filter((monitor) => monitor.shopifyProductId || monitor.productData?.sku).length;
+    bulkUpdateMetadataBtn.textContent = selectedMetadataCount > 0 ? `Update metadata (${selectedMetadataCount})` : `Update metadata (${metadataCount})`;
     stopImportBtn.textContent = "Stop Import";
   }
   stopImportBtn.style.display = importInProgress ? "" : "none";
@@ -986,9 +1091,25 @@ function renderAll() {
     }
     lastOutOfStockSignature = currentOutOfStockSignature;
   }
-  renderStats(allMonitors);
+  const hasActiveTopLevelFilters = !!(
+    searchInput.value.trim() ||
+    changedOnlyInput.checked ||
+    filterBrand.value ||
+    filterType.value
+  );
+
+  let visibleMonitors = hasActiveTopLevelFilters ? getFilteredMonitors() : allMonitors.slice();
+  if (!visibleMonitors.length && allMonitors.length && changedOnlyInput.checked && !allMonitors.some((monitor) => monitor.changeCount > 0)) {
+    changedOnlyInput.checked = false;
+    scheduleSaveDashboardUiState();
+    visibleMonitors = getFilteredMonitors();
+  }
+  renderStats(visibleMonitors);
   populateFilterOptions();
-  renderGrid(getFilteredMonitors());
+  renderGrid(visibleMonitors);
+  if (monitorDuplicatesPanel.style.display !== "none") {
+    loadDuplicateMonitorGroups().catch(() => {});
+  }
   updateOutOfStockButtons();
 
   if (selectedMonitorId) {
@@ -1037,20 +1158,29 @@ async function refreshShopifyProductCount(forceRefresh = false) {
   if (!await isConnected()) {
     shopifyProductCount = null;
     shopifyUniqueSkuCount = null;
-    renderStats(allMonitors);
+    shopifyMissingSkuCount = null;
+    shopifySkuGapDetails = [];
+    monitorOnlyMonitorIds = null;
+    renderStats(getFilteredMonitors());
     return;
   }
-  try {
-    if (forceRefresh) clearShopifyProductsSnapshotCache();
-    const products = await getShopifyProductsSnapshot();
-    shopifyProductCount = products.length;
-    const uniqueSkus = new Set(products.map((product) => getProductPrimarySku(product)).filter(Boolean));
-    shopifyUniqueSkuCount = uniqueSkus.size;
-  } catch (_) {
-    shopifyProductCount = null;
-    shopifyUniqueSkuCount = null;
+    try {
+      if (forceRefresh) clearShopifyProductsSnapshotCache();
+      const products = await getShopifyProductsSnapshot();
+      shopifyProductCount = products.length;
+      const uniqueSkus = new Set(products.map((product) => getProductPrimarySku(product)).filter(Boolean));
+      shopifyUniqueSkuCount = uniqueSkus.size;
+      shopifyMissingSkuCount = getShopifyMissingSkuCount(products);
+      shopifySkuGapDetails = findMonitorShopifySkuGapDetails(products, allMonitors);
+      monitorOnlyMonitorIds = computeMonitorMissingFromShopifyIds(products, allMonitors);
+    } catch (_) {
+      shopifyProductCount = null;
+      shopifyUniqueSkuCount = null;
+      shopifyMissingSkuCount = null;
+      shopifySkuGapDetails = [];
+      monitorOnlyMonitorIds = null;
   }
-  renderStats(allMonitors);
+  renderAll();
 }
 
 async function refreshOpenShopifyPanels(forceRefresh = false) {
@@ -1101,7 +1231,7 @@ monitorGrid.addEventListener("click", async (event) => {
       const NOW = Date.now();
       const HOURS_48 = 48 * 60 * 60 * 1000;
       const groupMonitors = groupKey === "__new48h__"
-        ? visible.filter((m) => m.createdAt && !m.shopifyProductId && !m.hiddenFromNew48h && (NOW - new Date(m.createdAt).getTime()) < HOURS_48)
+        ? getNew48hMonitors(visible, NOW)
         : groupKey === "__shopify_oos__"
           ? visible.filter((m) => isMonitorFullyOutOfStock(m) || shopifyOutOfStockMonitorIds?.has(m.id))
         : groupKey === "__errors__"
@@ -1266,6 +1396,58 @@ monitorDetail.addEventListener("click", async (event) => {
   if (target.classList.contains("pdata-cancel-btn")) {
     const monitor = allMonitors.find((m) => m.id === selectedMonitorId);
     if (monitor) renderDetail(monitor);
+    return;
+  }
+
+  if (target.dataset.resyncShopify) {
+    const monitorId = target.dataset.resyncShopify;
+    const monitor = allMonitors.find((m) => m.id === monitorId);
+    if (!monitor) return;
+    if (!await isConnected()) {
+      window.alert("Connect Shopify first.");
+      return;
+    }
+    target.textContent = "Updating…";
+    target.disabled = true;
+    try {
+      const result = await reapplyMonitorDataToShopify(monitor, monitor.lastExtractedData || {});
+      const syncVerb = result?.created ? "Created Shopify product from monitor data" : "Updated Shopify product from monitor data";
+      await Promise.all([
+        chrome.runtime.sendMessage({
+          type: "update-monitor",
+          payload: {
+            id: monitorId,
+            shopifyProductId: result?.id || monitor.shopifyProductId || null,
+            shopifyLastSyncAt: new Date().toISOString(),
+            shopifySyncStatus: "ok"
+          }
+        }),
+        addLog({
+          type: "shopify-sync",
+          title: [monitor.productData?.brand, monitor.productData?.sku].filter(Boolean).join(" ") || monitor.name,
+          productName: monitor.productData?.name || monitor.name || "",
+          brand: monitor.productData?.brand || "",
+          sku: monitor.productData?.sku || "",
+          details: [syncVerb],
+          monitorId: monitor.id,
+          url: monitor.url
+        }).catch(() => {})
+      ]);
+      await silentRefresh();
+      const refreshedMonitor = allMonitors.find((m) => m.id === monitorId);
+      if (refreshedMonitor) renderDetail(refreshedMonitor);
+    } catch (error) {
+      await chrome.runtime.sendMessage({
+        type: "update-monitor",
+        payload: {
+          id: monitorId,
+          shopifySyncStatus: "error"
+        }
+      }).catch(() => {});
+      target.textContent = "Update Shopify";
+      target.disabled = false;
+      window.alert(error?.message || String(error));
+    }
     return;
   }
 
@@ -1441,6 +1623,7 @@ bulkImportBtn.addEventListener("click", async () => {
   importInProgress = true;
   stopImportRequested = false;
   bulkImportBtn.disabled = true;
+  bulkUpdateMetadataBtn.disabled = true;
   bulkDeleteBtn.disabled = true;
   bulkDeleteShopifyBtn.disabled = true;
   bulkCheckBtn.disabled = true;
@@ -1466,6 +1649,7 @@ bulkImportBtn.addEventListener("click", async () => {
         throw new Error("Already imported to Shopify; this monitor is kept for ongoing sync.");
       }
       const created = await importMonitorProduct(monitor, importContext);
+      const importVerb = created?.relinkedExisting ? "Re-linked to existing Shopify product" : "Imported to Shopify";
       await Promise.all([
         chrome.runtime.sendMessage({
           type: "update-monitor",
@@ -1483,7 +1667,7 @@ bulkImportBtn.addEventListener("click", async () => {
           productName: monitor.productData?.name || monitor.name || "",
           brand: monitor.productData?.brand || "",
           sku: monitor.productData?.sku || "",
-          details: ["Imported to Shopify", "Monitor kept for ongoing price/size sync"],
+          details: [importVerb, "Monitor kept for ongoing price/size sync"],
           monitorId: monitor.id, url: monitor.url
         }).catch(() => {})
       ]);
@@ -1536,6 +1720,104 @@ bulkImportBtn.addEventListener("click", async () => {
     alert(`❌ All ${n} imports failed:\n\n${failed.map(f => `• ${f.name}\n  ${f.reason}`).join("\n\n")}`);
   } else {
     alert(`✓ Imported ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""} to Shopify as active products. Monitors were kept for ongoing sync.`);
+  }
+});
+
+bulkUpdateMetadataBtn.addEventListener("click", async () => {
+  const selectedTargets = allMonitors.filter((monitor) =>
+    checkedIds.has(monitor.id) && (monitor.shopifyProductId || monitor.productData?.sku)
+  );
+  const fallbackTargets = allMonitors.filter((monitor) => monitor.shopifyProductId || monitor.productData?.sku);
+  const targets = checkedIds.size ? selectedTargets : fallbackTargets;
+  const n = targets.length;
+  if (!n) {
+    alert(checkedIds.size ? "None of the selected monitors have a Shopify ID or SKU." : "No dashboard monitors have a Shopify ID or SKU.");
+    return;
+  }
+  if (!await isConnected()) { alert("Connect to Shopify first (see top of page)."); return; }
+
+  const scopeLabel = selectedTargets.length ? `${n} selected monitor${n !== 1 ? "s" : ""}` : `all ${n} dashboard monitor${n !== 1 ? "s" : ""} with Shopify IDs or SKUs`;
+  if (!window.confirm(`Update Shopify filter tags and metafields for ${scopeLabel}? This will not create new Shopify products.`)) return;
+
+  importInProgress = true;
+  stopImportRequested = false;
+  bulkUpdateMetadataBtn.disabled = true;
+  bulkImportBtn.disabled = true;
+  bulkDeleteBtn.disabled = true;
+  bulkDeleteShopifyBtn.disabled = true;
+  bulkCheckBtn.disabled = true;
+  stopImportBtn.textContent = "Stop";
+  stopImportBtn.disabled = false;
+  setProgressLabel(bulkUpdateMetadataBtn, "Updating metadata", 0, n);
+  updateBulkBtn();
+
+  const succeeded = [];
+  const failed = [];
+  let processed = 0;
+
+  try {
+    await primeImportCaches();
+  } catch (_) {}
+
+  const metadataContext = {};
+  for (let i = 0; i < targets.length; i++) {
+    if (stopImportRequested) break;
+    const monitor = targets[i];
+    try {
+      const result = await updateMonitorShopifyMetadata(monitor, metadataContext);
+      await Promise.all([
+        chrome.runtime.sendMessage({
+          type: "update-monitor",
+          payload: {
+            id: monitor.id,
+            shopifyProductId: result?.id || monitor.shopifyProductId || null,
+            shopifyLastSyncAt: new Date().toISOString(),
+            shopifySyncStatus: "ok"
+          }
+        }),
+        addLog({
+          type: "shopify-sync",
+          title: [monitor.productData?.brand, monitor.productData?.sku].filter(Boolean).join(" ") || monitor.name,
+          productName: monitor.productData?.name || monitor.name || "",
+          brand: monitor.productData?.brand || "",
+          sku: monitor.productData?.sku || "",
+          details: ["Updated Shopify filter tags and metafields"],
+          monitorId: monitor.id,
+          url: monitor.url
+        }).catch(() => {})
+      ]);
+      succeeded.push(monitor.id);
+    } catch (error) {
+      const pd = monitor.productData || {};
+      const reason = error?.message || String(error) || "Unknown error";
+      await addLog({
+        type: "error",
+        title: [pd.brand, pd.sku].filter(Boolean).join(" ") || monitor.name,
+        productName: pd.name || monitor.name || "",
+        brand: pd.brand || "",
+        sku: pd.sku || "",
+        details: [reason],
+        monitorId: monitor.id,
+        url: monitor.url
+      }).catch(() => {});
+      failed.push({ name: monitor.productData?.sku || monitor.name || monitor.id, reason });
+    } finally {
+      processed++;
+      setProgressLabel(bulkUpdateMetadataBtn, "Updating metadata", processed, n);
+    }
+  }
+
+  importInProgress = false;
+  stopImportRequested = false;
+  await loadDashboard();
+  updateBulkBtn();
+
+  if (processed < n) {
+    alert(`Stopped after ${processed}/${n} metadata updates.\n\nUpdated: ${succeeded.length}\nFailed: ${failed.length}`);
+  } else if (failed.length) {
+    alert(`Updated ${succeeded.length}/${n} products.\n\nFailed (${failed.length}):\n\n${failed.map((f) => `- ${f.name}\n  ${f.reason}`).join("\n\n")}`);
+  } else {
+    alert(`Updated Shopify filter metadata for ${succeeded.length} product${succeeded.length !== 1 ? "s" : ""}.`);
   }
 });
 
@@ -1914,11 +2196,15 @@ function getShopifySkuSet(products) {
 
 function getShopifyUnmonitoredStatusText() {
   const dupeCount = (shopifyProductCount != null && shopifyUniqueSkuCount != null)
-    ? shopifyProductCount - shopifyUniqueSkuCount
+    ? Math.max(0, shopifyProductCount - shopifyUniqueSkuCount - (shopifyMissingSkuCount || 0))
     : 0;
+  const missingSkuCount = shopifyMissingSkuCount || 0;
   const base = `${shopifyUnmonitoredProducts.length} Shopify product${shopifyUnmonitoredProducts.length !== 1 ? "s" : ""} available on Shopify but not on monitor.`;
   if (shopifyUnmonitoredProducts.length === 0 && dupeCount > 0) {
     return `${base} All unique Shopify SKUs are monitored. The ${dupeCount}-product gap in the dashboard is from ${dupeCount} duplicate-SKU product${dupeCount !== 1 ? "s" : ""} in Shopify.`;
+  }
+  if (shopifyUnmonitoredProducts.length === 0 && missingSkuCount > 0) {
+    return `${base} The ${missingSkuCount}-product gap in the dashboard is from ${missingSkuCount} Shopify product${missingSkuCount !== 1 ? "s" : ""} without SKU.`;
   }
   return base;
 }
@@ -1940,23 +2226,116 @@ function computeMonitorDuplicateSkuGroups(monitors = allMonitors) {
   }
   return [...bySku.entries()]
     .filter(([, group]) => group.length > 1)
-    .map(([sku, monitorsWithSku]) => ({ sku, monitors: monitorsWithSku }))
-    .sort((a, b) => a.sku.localeCompare(b.sku));
+      .map(([sku, monitorsWithSku]) => ({ sku, monitors: monitorsWithSku }))
+      .sort((a, b) => a.sku.localeCompare(b.sku));
+  }
+
+function renderMonitorDuplicateGroupsHtml(groups = monitorDuplicateSkuGroups) {
+  const missingSkuMonitors = getMonitorsMissingSku(allMonitors);
+  const duplicateHtml = groups.length ? groups.map((group) => `
+    <div style="padding:12px 16px;border-bottom:1px solid #f3f4f6">
+      <p style="margin:0;font-size:12px;font-weight:700;color:#111">${escapeHtml(group.sku)}</p>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:6px">
+        ${group.monitors.map((monitor) => {
+          const thumb = getMonitorThumb(monitor);
+          return `
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:10px;background:#fff;border:1px solid #eef2f7;cursor:pointer">
+              <input type="checkbox" class="monitor-duplicate-check" data-id="${escapeHtml(String(monitor.id))}" ${selectedDuplicateMonitorIds.has(String(monitor.id)) ? "checked" : ""}>
+              ${thumb
+                ? `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(monitor.productData?.name || monitor.name || "Product image")}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid #e5e7eb">`
+                : `<div style="width:48px;height:48px;border-radius:8px;flex-shrink:0;background:#f3f4f6;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:18px;color:#d1d5db">□</div>`}
+              <div style="min-width:0;flex:1">
+                <p style="margin:0;font-size:12px;color:#111">${escapeHtml(monitor.productData?.name || monitor.name || "Untitled monitor")}</p>
+                <p style="margin:2px 0 0;font-size:11px;color:#6b7280">${escapeHtml(monitor.id)}</p>
+              </div>
+            </label>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `).join("") : `<p style="padding:16px;color:#9ca3af;font-size:13px">No duplicate monitor SKUs found.</p>`;
+
+  const missingSkuHtml = missingSkuMonitors.length ? `
+    <div style="border-top:1px solid #e5e7eb;background:#fcfcfd">
+      <div style="padding:12px 16px;border-bottom:1px solid #f3f4f6">
+        <p style="margin:0;font-size:12px;font-weight:700;color:#111">Monitors without SKU</p>
+        <p style="margin:4px 0 0;font-size:12px;color:#6b7280">These monitors reduce the unique SKU count without being duplicates.</p>
+      </div>
+      ${missingSkuMonitors.map((monitor) => {
+        const thumb = getMonitorThumb(monitor);
+        return `
+          <label style="display:flex;align-items:flex-start;gap:10px;padding:12px 16px;border-bottom:1px solid #f3f4f6;background:#fff;cursor:pointer">
+            <input type="checkbox" class="monitor-duplicate-check" data-id="${escapeHtml(String(monitor.id))}" ${selectedDuplicateMonitorIds.has(String(monitor.id)) ? "checked" : ""}>
+            ${thumb
+              ? `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(monitor.productData?.name || monitor.name || "Product image")}" style="width:48px;height:48px;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid #e5e7eb">`
+              : `<div style="width:48px;height:48px;border-radius:8px;flex-shrink:0;background:#f3f4f6;border:1px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:18px;color:#d1d5db">□</div>`}
+            <div style="min-width:0;flex:1">
+              <p style="margin:0;font-size:12px;color:#111">${escapeHtml(monitor.productData?.name || monitor.name || "Untitled monitor")}</p>
+              <p style="margin:2px 0 0;font-size:11px;color:#6b7280">${escapeHtml(monitor.id)}</p>
+            </div>
+          </label>
+        `;
+      }).join("")}
+    </div>
+  ` : `<p style="padding:16px;color:#9ca3af;font-size:13px">No monitors without SKU found.</p>`;
+
+  return `
+    <div style="border-top:1px solid #e5e7eb;background:#fcfcfd">
+      <div style="padding:12px 16px;border-bottom:1px solid #f3f4f6">
+        <p style="margin:0;font-size:12px;font-weight:700;color:#111">Duplicate monitor SKUs</p>
+        <p style="margin:4px 0 0;font-size:12px;color:#6b7280">These are actual repeated monitor SKUs.</p>
+      </div>
+      ${duplicateHtml}
+    </div>
+    ${missingSkuHtml}
+  `;
+}
+
+function renderMonitorDuplicatesPanel() {
+  monitorDuplicatesList.innerHTML = renderMonitorDuplicateGroupsHtml(monitorDuplicateSkuGroups);
+  monitorDuplicatesDeleteBtn.disabled = selectedDuplicateMonitorIds.size === 0;
+}
+
+async function loadDuplicateMonitorGroups() {
+  monitorDuplicateSkuGroups = computeMonitorDuplicateSkuGroups(allMonitors);
+  const missingSkuMonitors = getMonitorsMissingSku(allMonitors);
+  selectedDuplicateMonitorIds.forEach((id) => {
+    const exists = monitorDuplicateSkuGroups.some((group) => group.monitors.some((monitor) => String(monitor.id) === String(id)))
+      || missingSkuMonitors.some((monitor) => String(monitor.id) === String(id));
+    if (!exists) selectedDuplicateMonitorIds.delete(id);
+  });
+  const duplicateCount = monitorDuplicateSkuGroups.reduce((count, group) => count + group.monitors.length, 0);
+  monitorDuplicatesStatus.textContent = (monitorDuplicateSkuGroups.length || missingSkuMonitors.length)
+    ? `Found ${monitorDuplicateSkuGroups.length} duplicate SKU group${monitorDuplicateSkuGroups.length !== 1 ? "s" : ""} and ${missingSkuMonitors.length} monitor${missingSkuMonitors.length !== 1 ? "s" : ""} without SKU.`
+    : "No monitor SKU issues found.";
+  renderMonitorDuplicatesPanel();
 }
 
 function getMonitorNotShopifyStatusText() {
   const shopifyDupeCount = (shopifyProductCount != null && shopifyUniqueSkuCount != null)
-    ? shopifyProductCount - shopifyUniqueSkuCount
+    ? Math.max(0, shopifyProductCount - shopifyUniqueSkuCount - (shopifyMissingSkuCount || 0))
     : 0;
+  const shopifyMissingCount = shopifyMissingSkuCount || 0;
   const monitorDupeCount = getMonitorDuplicateSkuCount(allMonitors);
+  const monitorUniqueSkuCount = getMonitorUniqueSkuCount(allMonitors);
+  const shopifySkuGap = shopifyUniqueSkuCount == null ? 0 : Math.max(0, monitorUniqueSkuCount - shopifyUniqueSkuCount);
+  const skuGapExampleText = shopifySkuGapDetails.length
+    ? `, e.g. ${shopifySkuGapDetails.slice(0, 5).join(", ")}`
+    : "";
   const base = `${monitorNotShopifyMonitors.length} monitor${monitorNotShopifyMonitors.length !== 1 ? "s" : ""} available on monitor but not on Shopify.`;
   if (monitorNotShopifyMonitors.length === 0) {
     const notes = [];
+    if (shopifySkuGap > 0) {
+      notes.push(`${shopifySkuGap} SKU count gap from Shopify SKU normalization or duplicate products${skuGapExampleText}`);
+    }
     if (monitorDupeCount > 0) {
       notes.push(`${monitorDupeCount} duplicate-SKU monitor${monitorDupeCount !== 1 ? "s" : ""}`);
     }
     if (shopifyDupeCount > 0) {
       notes.push(`${shopifyDupeCount} duplicate-SKU Shopify product${shopifyDupeCount !== 1 ? "s" : ""}`);
+    }
+    if (shopifyMissingCount > 0) {
+      notes.push(`${shopifyMissingCount} Shopify product${shopifyMissingCount !== 1 ? "s" : ""} without SKU`);
     }
     if (notes.length) {
       return `${base} All unique monitor SKUs have a matching Shopify product. The count gap is explained by ${notes.join(" and ")}.`;
@@ -2016,6 +2395,49 @@ function computeShopifyMonitorDiffs(products, monitors) {
   return { shopifyOnlyProducts, monitorOnlyMonitors };
 }
 
+function findMonitorShopifySkuGapDetails(products, monitors) {
+  const monitorSkuSet = new Set(
+    (Array.isArray(monitors) ? monitors : [])
+      .map((monitor) => normalizeSku(monitor?.productData?.sku))
+      .filter(Boolean)
+  );
+  const primarySkuSet = new Set((products || []).map(getProductPrimarySku).filter(Boolean));
+  const allShopifySkuSet = new Set();
+  for (const product of (products || [])) {
+    getProductSkuSet(product).forEach((sku) => allShopifySkuSet.add(sku));
+  }
+  return [...monitorSkuSet]
+    .filter((sku) => !primarySkuSet.has(sku) && allShopifySkuSet.has(sku))
+    .sort();
+}
+
+function computeMonitorMissingFromShopifyIds(products, monitors) {
+  const safeMonitors = Array.isArray(monitors) ? monitors : [];
+  const shopifyProductIdSet = new Set();
+  const shopifySkuSet = new Set();
+
+  for (const product of (products || [])) {
+    const productId = Number(product?.id);
+    if (productId) shopifyProductIdSet.add(productId);
+    for (const sku of getProductSkuSet(product)) {
+      if (sku) shopifySkuSet.add(sku);
+    }
+  }
+
+  const missingIds = new Set();
+  for (const monitor of safeMonitors) {
+    const linkedProductId = Number(monitor?.shopifyProductId || 0);
+    const sku = normalizeSku(monitor?.productData?.sku);
+    const hasLinkedShopifyProduct = linkedProductId && shopifyProductIdSet.has(linkedProductId);
+    const isSkuMatched = sku && shopifySkuSet.has(sku);
+    if (!hasLinkedShopifyProduct && !isSkuMatched) {
+      missingIds.add(String(monitor?.id || ""));
+    }
+  }
+
+  return missingIds;
+}
+
 function renderShopifyUnmonitoredList() {
   if (!shopifyUnmonitoredProducts.length) {
     shopifyUnmonitoredList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No Shopify-only products found.</p>`;
@@ -2053,6 +2475,8 @@ async function loadShopifyUnmonitoredProducts(forceRefresh = false) {
     const products = await getShopifyProductsSnapshot();
     shopifyProductCount = products.length;
     shopifyUniqueSkuCount = new Set(products.map(getProductPrimarySku).filter(Boolean)).size;
+    shopifyMissingSkuCount = getShopifyMissingSkuCount(products);
+    shopifySkuGapDetails = findMonitorShopifySkuGapDetails(products, allMonitors);
     const diffs = computeShopifyMonitorDiffs(products, allMonitors);
     shopifyUnmonitoredProducts = diffs.shopifyOnlyProducts;
     selectedShopifyUnmonitoredIds.clear();
@@ -2146,6 +2570,8 @@ async function loadMonitorNotShopifyMonitors(forceRefresh = false) {
     const products = await getShopifyProductsSnapshot();
     shopifyProductCount = products.length;
     shopifyUniqueSkuCount = new Set(products.map(getProductPrimarySku).filter(Boolean)).size;
+    shopifyMissingSkuCount = getShopifyMissingSkuCount(products);
+    shopifySkuGapDetails = findMonitorShopifySkuGapDetails(products, allMonitors);
     const diffs = computeShopifyMonitorDiffs(products, allMonitors);
     monitorNotShopifyMonitors = diffs.monitorOnlyMonitors;
     monitorDuplicateSkuGroups = computeMonitorDuplicateSkuGroups(allMonitors);
@@ -2293,8 +2719,10 @@ async function deleteSelectedDuplicateMonitors() {
   if (!ids.length) return;
   if (!window.confirm(`Delete ${ids.length} selected duplicate monitor${ids.length > 1 ? "s" : ""} from monitors? This cannot be undone.`)) return;
 
-  const button = ensureMonitorDuplicateDeleteBtn();
-  const originalText = button?.textContent || "Delete selected duplicate monitors";
+  const button = monitorDuplicatesPanel.style.display !== "none"
+    ? monitorDuplicatesDeleteBtn
+    : ensureMonitorDuplicateDeleteBtn();
+  const originalText = button?.textContent || "Delete selected monitors";
   const failures = [];
 
   try {
@@ -2303,6 +2731,7 @@ async function deleteSelectedDuplicateMonitors() {
       if (!monitor) {
         selectedDuplicateMonitorIds.delete(String(id));
         renderMonitorNotShopifyList();
+        renderMonitorDuplicatesPanel();
         return;
       }
 
@@ -2321,22 +2750,29 @@ async function deleteSelectedDuplicateMonitors() {
       }
 
       renderMonitorNotShopifyList();
+      renderMonitorDuplicatesPanel();
     });
 
     await loadDashboard();
-    await loadMonitorNotShopifyMonitors(true);
+    await loadDuplicateMonitorGroups();
+    if (monitorNotShopifyPanel.style.display !== "none") {
+      await loadMonitorNotShopifyMonitors(true);
+    }
     refreshUndoCount();
 
     if (failures.length) {
       const details = failures.map((failure) => `${failure.name}: ${failure.reason}`).join("\n");
-      monitorNotShopifyStatus.textContent = `Deleted ${ids.length - failures.length}/${ids.length} selected duplicate monitor${ids.length !== 1 ? "s" : ""}.`;
+      monitorNotShopifyStatus.textContent = `Deleted ${ids.length - failures.length}/${ids.length} selected monitor${ids.length !== 1 ? "s" : ""}.`;
+      monitorDuplicatesStatus.textContent = `Deleted ${ids.length - failures.length}/${ids.length} selected monitor${ids.length !== 1 ? "s" : ""}.`;
       alert(`Some duplicate deletions failed:\n\n${details}`);
     } else {
-      monitorNotShopifyStatus.textContent = `Deleted ${ids.length} selected duplicate monitor${ids.length !== 1 ? "s" : ""} from monitors.`;
+      monitorNotShopifyStatus.textContent = `Deleted ${ids.length} selected monitor${ids.length !== 1 ? "s" : ""} from monitors.`;
+      monitorDuplicatesStatus.textContent = `Deleted ${ids.length} selected monitor${ids.length !== 1 ? "s" : ""} from monitors.`;
     }
   } finally {
     const safeButton = ensureMonitorDuplicateDeleteBtn();
     if (safeButton) safeButton.textContent = originalText;
+    monitorDuplicatesDeleteBtn.textContent = "Delete selected monitors";
   }
 }
 
@@ -2396,16 +2832,30 @@ function computeDuplicateSkuGroups(products, skuMapping, monitors) {
     const keepProduct = monitorReferenced || mapped || oldest;
     const keepReason = monitorReferenced ? "monitor" : mapped ? "mapping" : "oldest";
 
-    // A product is only safe to delete when it is not protected by ANY reference for this SKU.
-    // This is stricter than just checking monitorReferencedIds — it also covers the mapping.
-    const safeExtras = group.filter(
-      (p) => p.id !== keepProduct.id && !protected_.has(Number(p.id))
-    );
+    const safeExtras = [];
+    const protectedProducts = [];
+    for (const product of group) {
+      if (Number(product.id) === Number(keepProduct.id)) continue;
+      if (protected_.has(Number(product.id))) protectedProducts.push(product);
+      else safeExtras.push(product);
+    }
 
-    // Skip groups where nothing can be safely deleted
-    if (safeExtras.length === 0) continue;
+    const blockedReasons = [];
+    if (group.some((p) => monitorReferencedIds.has(Number(p.id)) && Number(p.id) !== Number(keepProduct.id))) {
+      blockedReasons.push("used by monitor");
+    }
+    if (group.some((p) => mappedIds.has(Number(p.id)) && Number(p.id) !== Number(keepProduct.id))) {
+      blockedReasons.push("in SKU mapping");
+    }
 
-    groups.push({ sku, keepProduct, keepReason, extraProducts: safeExtras });
+    groups.push({
+      sku,
+      keepProduct,
+      keepReason,
+      extraProducts: safeExtras,
+      protectedProducts,
+      blockedReasons
+    });
   }
   groups.sort((a, b) => a.sku.localeCompare(b.sku));
   return groups;
@@ -2417,9 +2867,9 @@ function renderDuplicateSkuPanel() {
   skuDuplicatesSelectAllBtn.disabled = totalExtras === 0;
   skuDuplicatesDeselectBtn.disabled = selectedDuplicateIds.size === 0;
 
-  if (!skuDuplicateGroups.length) {
-    skuDuplicatesList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No duplicate SKUs found.</p>`;
-    return;
+  if (!skuDuplicateGroups.length && !shopifyMissingSkuProducts.length) {
+    skuDuplicatesList.innerHTML = `<p style="padding:24px;text-align:center;color:#9ca3af;font-size:13px">No duplicate products are currently eligible for automatic cleanup.</p>`;
+      return;
   }
 
   const keepReasonLabel = { monitor: "used by monitor", mapping: "in SKU mapping", oldest: "oldest product" };
@@ -2442,7 +2892,7 @@ function renderDuplicateSkuPanel() {
       </div>`;
   }
 
-  skuDuplicatesList.innerHTML = skuDuplicateGroups.map(({ sku, keepProduct, keepReason, extraProducts }) => {
+  const duplicateGroupsHtml = skuDuplicateGroups.map(({ sku, keepProduct, keepReason, extraProducts, protectedProducts = [], blockedReasons = [] }) => {
     const keepHtml = `
       <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#f0fdf4;border-bottom:1px solid #bbf7d0">
         <span style="flex-shrink:0;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:#16a34a;color:#fff;white-space:nowrap">KEEP · ${escapeHtml(keepReasonLabel[keepReason] || keepReason)}</span>
@@ -2458,15 +2908,47 @@ function renderDuplicateSkuPanel() {
           ${productInfoHtml(p)}
         </label>`;
     }).join("");
+    const protectedHtml = protectedProducts.map((p) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff7ed;border-bottom:1px solid #fed7aa">
+        <span style="flex-shrink:0;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:#ea580c;color:#fff;white-space:nowrap">PROTECTED</span>
+        ${productInfoHtml(p)}
+      </div>
+    `).join("");
+    const blockedReasonText = blockedReasons.length
+      ? ` · blocked by ${escapeHtml(blockedReasons.join(" + "))}`
+      : "";
+    const summaryParts = [];
+    summaryParts.push(`${extraProducts.length + protectedProducts.length + 1} product${extraProducts.length + protectedProducts.length + 1 !== 1 ? "s" : ""}`);
+    if (extraProducts.length) summaryParts.push(`${extraProducts.length} safe to delete`);
+    if (protectedProducts.length) summaryParts.push(`${protectedProducts.length} protected`);
     return `
       <div style="border-bottom:2px solid var(--border)">
         <div style="padding:8px 16px;background:#f8fafc;border-bottom:1px solid var(--border)">
           <span style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:0.05em">SKU: ${escapeHtml(sku)}</span>
-          <span style="margin-left:8px;font-size:11px;color:#9ca3af">${extraProducts.length + 1} product${extraProducts.length + 1 !== 1 ? "s" : ""} — ${extraProducts.length} safe to delete</span>
+          <span style="margin-left:8px;font-size:11px;color:#9ca3af">${summaryParts.join(" — ")}${blockedReasonText}</span>
         </div>
-        ${keepHtml}${extrasHtml}
+        ${keepHtml}${protectedHtml}${extrasHtml}
       </div>`;
   }).join("");
+
+  const missingSkuHtml = shopifyMissingSkuProducts.length
+    ? `
+      <div style="border-bottom:2px solid var(--border)">
+        <div style="padding:8px 16px;background:#f8fafc;border-bottom:1px solid var(--border)">
+          <span style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:0.05em">Products without SKU</span>
+          <span style="margin-left:8px;font-size:11px;color:#9ca3af">${shopifyMissingSkuProducts.length} product${shopifyMissingSkuProducts.length !== 1 ? "s" : ""}</span>
+        </div>
+        ${shopifyMissingSkuProducts.map((product) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff7ed;border-bottom:1px solid #fed7aa">
+            <span style="flex-shrink:0;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:#b45309;color:#fff;white-space:nowrap">NO SKU</span>
+            ${productInfoHtml(product)}
+          </div>
+        `).join("")}
+      </div>
+    `
+    : "";
+
+  skuDuplicatesList.innerHTML = `${duplicateGroupsHtml}${missingSkuHtml}`;
 
   skuDuplicatesList.querySelectorAll(".sku-dup-check").forEach((cb) => {
     cb.addEventListener("change", () => {
@@ -2482,6 +2964,7 @@ async function loadDuplicateSkuProducts(forceRefresh = false) {
   if (!await isConnected()) {
     skuDuplicatesStatus.textContent = "Connect Shopify first.";
     skuDuplicateGroups = [];
+    shopifyMissingSkuProducts = [];
     selectedDuplicateIds.clear();
     renderDuplicateSkuPanel();
     return;
@@ -2493,6 +2976,9 @@ async function loadDuplicateSkuProducts(forceRefresh = false) {
     const products = await getShopifyProductsSnapshot();
     shopifyProductCount = products.length;
     shopifyUniqueSkuCount = new Set(products.map(getProductPrimarySku).filter(Boolean)).size;
+    shopifyMissingSkuCount = getShopifyMissingSkuCount(products);
+    shopifyMissingSkuProducts = products.filter((product) => !getProductPrimarySku(product));
+    const rawDuplicateProductCount = getShopifyDuplicateProductCount(products);
     const { shopifySkuMapping, SHOPIFY_SHOP } = await chrome.storage.local.get(["shopifySkuMapping", "SHOPIFY_SHOP"]);
     const shopDomain = SHOPIFY_SHOP || "orjn.myshopify.com";
     const storeName = shopDomain.replace(".myshopify.com", "");
@@ -2504,15 +2990,28 @@ async function loadDuplicateSkuProducts(forceRefresh = false) {
       for (const p of extraProducts) selectedDuplicateIds.add(String(p.id));
     }
     const totalExtras = skuDuplicateGroups.reduce((n, g) => n + g.extraProducts.length, 0);
-    if (skuDuplicateGroups.length === 0) {
-      skuDuplicatesStatus.textContent = "No duplicate SKUs found. Your Shopify store is clean.";
+    const totalProtected = skuDuplicateGroups.reduce((n, g) => n + (g.protectedProducts?.length || 0), 0);
+    const actionableGroups = skuDuplicateGroups.filter((g) => g.extraProducts.length > 0).length;
+    if (skuDuplicateGroups.length === 0 && shopifyMissingSkuProducts.length === 0) {
+      skuDuplicatesStatus.textContent = rawDuplicateProductCount > 0
+        ? `${rawDuplicateProductCount} duplicate-SKU Shopify product${rawDuplicateProductCount !== 1 ? "s exist" : " exists"}, but none ${rawDuplicateProductCount !== 1 ? "are" : "is"} safe to delete automatically because ${rawDuplicateProductCount !== 1 ? "they are" : "it is"} still referenced by a monitor or SKU mapping.`
+        : "No duplicate SKUs found. Your Shopify store is clean.";
     } else {
-      skuDuplicatesStatus.textContent = `Found ${skuDuplicateGroups.length} SKU${skuDuplicateGroups.length !== 1 ? "s" : ""} with duplicates — ${totalExtras} extra product${totalExtras !== 1 ? "s" : ""} can be deleted. Review below, then click Delete selected.`;
+      const statusParts = [];
+      if (skuDuplicateGroups.length > 0) {
+        const protectedText = totalProtected ? ` ${totalProtected} protected product${totalProtected !== 1 ? "s" : ""} still block full cleanup.` : "";
+        statusParts.push(`Found ${skuDuplicateGroups.length} SKU${skuDuplicateGroups.length !== 1 ? "s" : ""} with duplicates — ${totalExtras} extra product${totalExtras !== 1 ? "s" : ""} can be deleted across ${actionableGroups} actionable group${actionableGroups !== 1 ? "s" : ""}.${protectedText}`);
+      }
+      if (shopifyMissingSkuProducts.length > 0) {
+        statusParts.push(`${shopifyMissingSkuProducts.length} Shopify product${shopifyMissingSkuProducts.length !== 1 ? "s" : ""} without SKU ${shopifyMissingSkuProducts.length !== 1 ? "are" : "is"} listed below.`);
+      }
+      skuDuplicatesStatus.textContent = statusParts.join(" ");
     }
     renderDuplicateSkuPanel();
   } catch (error) {
     skuDuplicatesStatus.textContent = `Error: ${error.message || error}`;
     skuDuplicateGroups = [];
+    shopifyMissingSkuProducts = [];
     selectedDuplicateIds.clear();
     renderDuplicateSkuPanel();
   }
@@ -2680,6 +3179,7 @@ openShopifyUnmonitoredBtn.addEventListener("click", async () => {
   } else {
     shopifyUnmonitoredPanel.style.display = "";
     monitorNotShopifyPanel.style.display = "none";
+    monitorDuplicatesPanel.style.display = "none";
     skuDuplicatesPanel.style.display = "none";
     await loadShopifyUnmonitoredProducts(true);
     shopifyUnmonitoredPanel.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2693,9 +3193,24 @@ openMonitorNotShopifyBtn.addEventListener("click", async () => {
   } else {
     monitorNotShopifyPanel.style.display = "";
     shopifyUnmonitoredPanel.style.display = "none";
+    monitorDuplicatesPanel.style.display = "none";
     skuDuplicatesPanel.style.display = "none";
     await loadMonitorNotShopifyMonitors(true);
     monitorNotShopifyPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+});
+
+openMonitorDuplicatesBtn.addEventListener("click", async () => {
+  const isOpen = monitorDuplicatesPanel.style.display !== "none";
+  if (isOpen) {
+    monitorDuplicatesPanel.style.display = "none";
+  } else {
+    monitorDuplicatesPanel.style.display = "";
+    shopifyUnmonitoredPanel.style.display = "none";
+    monitorNotShopifyPanel.style.display = "none";
+    skuDuplicatesPanel.style.display = "none";
+    await loadDuplicateMonitorGroups();
+    monitorDuplicatesPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 });
 
@@ -2725,6 +3240,9 @@ closeShopifyUnmonitoredBtn.addEventListener("click", () => {
 closeMonitorNotShopifyBtn.addEventListener("click", () => {
   monitorNotShopifyPanel.style.display = "none";
 });
+closeMonitorDuplicatesBtn.addEventListener("click", () => {
+  monitorDuplicatesPanel.style.display = "none";
+});
 
 ensureMonitorDuplicateDeleteBtn();
 
@@ -2732,9 +3250,11 @@ shopifyUnmonitoredRefreshBtn.addEventListener("click", () => loadShopifyUnmonito
 shopifyUnmonitoredClearSelectedBtn.addEventListener("click", clearSelectedShopifyUnmonitoredList);
 shopifyUnmonitoredClearBtn.addEventListener("click", clearShopifyUnmonitoredList);
 monitorNotShopifyRefreshBtn.addEventListener("click", () => loadMonitorNotShopifyMonitors(true));
+monitorDuplicatesRefreshBtn.addEventListener("click", () => loadDuplicateMonitorGroups());
 monitorNotShopifyClearSelectedBtn.addEventListener("click", clearSelectedMonitorNotShopifyList);
 monitorNotShopifyClearBtn.addEventListener("click", clearMonitorNotShopifyList);
 monitorNotShopifyDeleteDuplicatesBtn?.addEventListener("click", deleteSelectedDuplicateMonitors);
+monitorDuplicatesDeleteBtn.addEventListener("click", deleteSelectedDuplicateMonitors);
 
 shopifyUnmonitoredList.addEventListener("change", (event) => {
   const target = event.target;
@@ -2762,6 +3282,22 @@ monitorNotShopifyList.addEventListener("change", (event) => {
   if (target.checked) selectedDuplicateMonitorIds.add(id);
   else selectedDuplicateMonitorIds.delete(id);
   renderMonitorNotShopifyList();
+  if (monitorDuplicatesPanel.style.display !== "none") {
+    renderMonitorDuplicatesPanel();
+  }
+});
+
+monitorDuplicatesList.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!target.classList.contains("monitor-duplicate-check")) return;
+  const id = String(target.dataset.id || "");
+  if (!id) return;
+  if (target.checked) selectedDuplicateMonitorIds.add(id);
+  else selectedDuplicateMonitorIds.delete(id);
+  renderMonitorDuplicatesPanel();
+  if (monitorNotShopifyPanel.style.display !== "none") {
+    renderMonitorNotShopifyList();
+  }
 });
 
 shopifyUnmonitoredDeleteSelectedBtn.addEventListener("click", async () => {

@@ -237,16 +237,84 @@ export async function getMonitors() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   const normalized = normalizeMonitors(stored[STORAGE_KEY] || []);
   if (normalized.changed) {
-    await chrome.storage.local.set({ [STORAGE_KEY]: normalized.monitors });
+    await persistMonitors(normalized.monitors);
   }
   return normalized.monitors;
 }
 
 export async function saveMonitors(monitors) {
   const normalized = normalizeMonitors(monitors);
-  await chrome.storage.local.set({
-    [STORAGE_KEY]: normalized.monitors
-  });
+  await persistMonitors(normalized.monitors);
+}
+
+function isQuotaError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("quota") || message.includes("kquotabytes");
+}
+
+function trimText(value, maxLength) {
+  const text = typeof value === "string" ? value : "";
+  if (!maxLength || text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}…`;
+}
+
+function compactChangeHistoryEntry(entry, dropText = false) {
+  if (!entry || typeof entry !== "object") return entry;
+  return {
+    ...entry,
+    previousText: dropText ? "" : trimText(entry.previousText, 500),
+    currentText: dropText ? "" : trimText(entry.currentText, 500),
+    previousHtml: "",
+    currentHtml: "",
+    htmlDiff: ""
+  };
+}
+
+function compactMonitorForStorage(monitor, level = 1) {
+  if (!monitor || typeof monitor !== "object") return monitor;
+  if (level <= 0) return monitor;
+
+  const compacted = { ...monitor };
+
+  compacted.lastHtmlSnapshot = "";
+  compacted.previousHtmlSnapshot = "";
+  compacted.lastHtmlDiff = "";
+
+  if (level >= 1) {
+    compacted.initialFullPageText = trimText(compacted.initialFullPageText, 4000);
+    compacted.lastSnapshot = trimText(compacted.lastSnapshot, 4000);
+    compacted.previousSnapshot = trimText(compacted.previousSnapshot, 4000);
+    compacted.changeHistory = Array.isArray(compacted.changeHistory)
+      ? compacted.changeHistory.slice(0, 5).map((entry) => compactChangeHistoryEntry(entry, false))
+      : [];
+  }
+
+  if (level >= 2) {
+    compacted.initialFullPageText = "";
+    compacted.lastSnapshot = trimText(compacted.lastSnapshot, 1000);
+    compacted.previousSnapshot = trimText(compacted.previousSnapshot, 1000);
+    compacted.changeHistory = Array.isArray(compacted.changeHistory)
+      ? compacted.changeHistory.slice(0, 2).map((entry) => compactChangeHistoryEntry(entry, true))
+      : [];
+  }
+
+  return compacted;
+}
+
+async function persistMonitors(monitors) {
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEY]: monitors });
+  } catch (error) {
+    if (!isQuotaError(error)) throw error;
+    try {
+      const compacted = monitors.map((monitor) => compactMonitorForStorage(monitor, 1));
+      await chrome.storage.local.set({ [STORAGE_KEY]: compacted });
+    } catch (secondError) {
+      if (!isQuotaError(secondError)) throw secondError;
+      const compacted = monitors.map((monitor) => compactMonitorForStorage(monitor, 2));
+      await chrome.storage.local.set({ [STORAGE_KEY]: compacted });
+    }
+  }
 }
 
 export function intervalLabel(minutes) {

@@ -38,14 +38,25 @@
             </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-cluster">
+          <div class="header-cluster header-cluster--tools">
             <span class="header-cluster-label">Shopify Views</span>
-            <div class="header-group">
-              <button id="open-shopify-unmonitored-btn" class="ghost">Available on Shopify but not on monitor</button>
-              <button id="open-monitor-not-shopify-btn" class="ghost">Available on monitor but not on Shopify</button>
-              <button id="open-shopify-out-of-stock-btn" class="ghost">Open out of stock</button>
-              <button id="check-shopify-out-of-stock-btn" class="ghost">Check out of stock</button>
-              <button id="open-sku-duplicates-btn" class="ghost">Duplicate SKU cleanup</button>
+            <div class="header-action-stack">
+              <div class="header-button-block">
+                <span class="header-mini-label">Compare</span>
+                <div class="header-button-row">
+                  <button id="open-shopify-unmonitored-btn" class="ghost">Shopify only</button>
+                  <button id="open-monitor-not-shopify-btn" class="ghost">Monitor only</button>
+                  <button id="open-monitor-duplicates-btn" class="ghost">Monitor SKU issues</button>
+                </div>
+              </div>
+              <div class="header-button-block">
+                <span class="header-mini-label">Stock & Cleanup</span>
+                <div class="header-button-row">
+                  <button id="open-shopify-out-of-stock-btn" class="ghost">Open out of stock</button>
+                  <button id="check-shopify-out-of-stock-btn" class="ghost">Check out of stock</button>
+                  <button id="open-sku-duplicates-btn" class="ghost">Duplicate SKU cleanup</button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="hdr-sep"></div>
@@ -95,6 +106,7 @@
             <span class="header-cluster-label">Shopify Sync</span>
             <div class="header-group">
               <button id="bulk-import" class="import-btn" disabled>Import to Shopify</button>
+              <button id="bulk-update-metadata" class="secondary" disabled>Update metadata</button>
               <button id="stop-import" class="inline-button danger" style="display:none">Stop Import</button>
               <button id="undo-import" class="inline-button" style="display:none">Undo Import</button>
             </div>
@@ -182,7 +194,7 @@
         <div id="shopify-unmonitored-list" style="max-height:360px;overflow-y:auto"></div>
       </section>
 
-      <section id="monitor-not-shopify-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <section id="monitor-not-shopify-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
           <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Available on monitor but not on Shopify</span>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -193,10 +205,23 @@
           </div>
         </div>
         <div id="monitor-not-shopify-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
-        <div id="monitor-not-shopify-list" style="max-height:360px;overflow-y:auto"></div>
-      </section>
+          <div id="monitor-not-shopify-list" style="max-height:360px;overflow-y:auto"></div>
+        </section>
 
-      <section id="sku-duplicates-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <section id="monitor-duplicates-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
+            <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Monitor SKU issues</span>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button id="monitor-duplicates-refresh-btn" class="ghost" style="font-size:11px;padding:4px 10px">Refresh</button>
+              <button id="monitor-duplicates-delete-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Delete selected monitors</button>
+              <button id="close-monitor-duplicates-btn" class="ghost" style="font-size:11px;padding:4px 10px">× Close</button>
+            </div>
+          </div>
+          <div id="monitor-duplicates-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
+          <div id="monitor-duplicates-list" style="max-height:360px;overflow-y:auto"></div>
+        </section>
+
+        <section id="sku-duplicates-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
           <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Duplicate SKU Cleanup</span>
           <div style="display:flex;gap:6px;flex-wrap:wrap">

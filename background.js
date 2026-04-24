@@ -7,7 +7,7 @@ import {
   addLog,
   canonicalizeBrand
 } from "./shared.js";
-import { updateShopifyForMonitor, syncMonitorBrandsToShopify, normalizeAllShopifyVendors } from "./shopify.js";
+import { updateShopifyForMonitor, syncMonitorBrandsToShopify, normalizeAllShopifyVendors, syncMonitorShopifyStatus } from "./shopify.js";
 
 const ALARM_PREFIX = "monitor:";
 const MAX_HISTORY_ENTRIES = 12;
@@ -123,6 +123,14 @@ function waitForTabLoad(tabId, timeoutMs = 60000) {
       if (removedTabId !== tabId) return;
       finish(() => reject(new Error("Tab closed by user")));
     }
+
+    try {
+      chrome.tabs.get(tabId, (tab) => {
+        if (done) return;
+        if (chrome.runtime.lastError) return;
+        if (tab?.status === "complete") finish(resolve);
+      });
+    } catch (_) {}
 
     chrome.tabs.onUpdated.addListener(updatedListener);
     chrome.tabs.onRemoved.addListener(removedListener);
@@ -274,6 +282,35 @@ async function captureSnapshotFromCurrentTab(tabId, monitor) {
     ? monitor.selectors
     : (monitor.selector ? [monitor.selector] : []);
   const priceAdjustment = Number(monitor.priceAdjustment) || 80;
+
+  // New monitors often show the PDP data briefly and then re-render it away.
+  // Start observing the live tab immediately so we can latch onto that transient
+  // state before falling back to a plain one-shot extraction.
+  captureTabIds.add(tabId);
+  try {
+    await injectCaptureObserver(tabId, selectors, true, monitor.name, priceAdjustment);
+    const observed = await pollForResult(tabId, 8000);
+    if (observed && observed.ok) {
+      return observed;
+    }
+  } catch (_) {
+    // Fall through to the direct one-shot capture below.
+  } finally {
+    captureTabIds.delete(tabId);
+    chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        if (window.__monitorCaptureObserver) {
+          try { window.__monitorCaptureObserver.disconnect(); } catch (_) {}
+          window.__monitorCaptureObserver = null;
+        }
+        if (window.__monitorHeartbeat) {
+          clearInterval(window.__monitorHeartbeat);
+          window.__monitorHeartbeat = null;
+        }
+      }
+    }).catch(() => {});
+  }
 
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -941,6 +978,8 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
         window.__monitorResult = result;
         if (captureObserver) { captureObserver.disconnect(); captureObserver = null; }
         if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+        window.__monitorCaptureObserver = null;
+        window.__monitorHeartbeat = null;
       }
 
       function attemptCapture() {
@@ -1003,16 +1042,31 @@ async function injectCaptureObserver(tabId, selectors, captureFullPage, monitorN
 
       captureObserver = new MutationObserver(() => { if (!window.__monitorResult) attemptCapture(); });
       captureObserver.observe(document.documentElement, { childList: true, subtree: true });
+      window.__monitorCaptureObserver = captureObserver;
 
-      // Heartbeat every 300 ms — needed for the case where FL images are already
+      // Heartbeat every 100 ms — needed for the case where FL images are already
       // in the DOM when we inject (no more DOM mutations will fire).
       heartbeat = setInterval(() => {
         if (window.__monitorResult) { clearInterval(heartbeat); heartbeat = null; return; }
         attemptCapture();
-      }, 300);
+      }, 100);
+      window.__monitorHeartbeat = heartbeat;
     },
     args: [selectors, captureFullPage, monitorName, priceAdjustment]
   });
+}
+
+async function tryInjectCaptureObserver(tabId, selectors, captureFullPage, monitorName, priceAdjustment = 80, attempts = 20, delayMs = 75) {
+  for (let i = 0; i < attempts; i += 1) {
+    if (!captureTabIds.has(tabId)) return false;
+    try {
+      await injectCaptureObserver(tabId, selectors, captureFullPage, monitorName, priceAdjustment);
+      return true;
+    } catch (_) {
+      if (i < attempts - 1) await sleep(delayMs);
+    }
+  }
+  return false;
 }
 
 // Returns: result object on success, null if tab closed by user, false if timed out
@@ -1020,7 +1074,7 @@ async function pollForResult(tabId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!captureTabIds.has(tabId)) return null;
-    await sleep(50);
+    await sleep(25);
     if (!captureTabIds.has(tabId)) return null;
     try {
       const [{ result }] = await chrome.scripting.executeScript({
@@ -1047,6 +1101,22 @@ async function captureSnapshotInHiddenTab(monitor, captureFullPage = false, _ret
   captureTabIds.add(tab.id);
 
   try {
+    const fastInjected = await tryInjectCaptureObserver(
+      tab.id,
+      selectors,
+      captureFullPage,
+      monitor.name,
+      Number(monitor.priceAdjustment) || 80
+    );
+    if (fastInjected) {
+      const earlyResult = await pollForResult(tab.id, 5000);
+      if (earlyResult && earlyResult.ok) {
+        captureTabIds.delete(tab.id);
+        await chrome.tabs.remove(tab.id).catch(() => {});
+        return earlyResult;
+      }
+    }
+
     // Step 1: wait for initial load
     await waitForTabLoad(tab.id);
     if (!captureTabIds.has(tab.id)) {
@@ -1054,9 +1124,9 @@ async function captureSnapshotInHiddenTab(monitor, captureFullPage = false, _ret
       return { ok: false, error: "Tab closed unexpectedly" };
     }
 
-    // Step 2: only do the extra reload for full first-time captures.
-    // Routine checks only need fast live price/size data.
-    if (captureFullPage) {
+    // Step 2: do not burn time reloading on the initial first-run capture.
+    // If we need a retry, a reload can still help recover.
+    if (captureFullPage && _retryCount > 0) {
       await chrome.tabs.reload(tab.id);
       await waitForTabLoad(tab.id);
       if (!captureTabIds.has(tab.id)) {
@@ -1100,6 +1170,8 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
 
   const monitor = monitors[index];
   const next = { ...monitor };
+  const wasError = monitor.status === "error";
+  let desiredShopifyStatus = null;
 
   try {
     let monitorHostname = "";
@@ -1145,6 +1217,7 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
     if (!snapshot.ok) {
       next.status = "error";
       next.lastError = snapshot.error;
+      if (!wasError) desiredShopifyStatus = "draft";
     } else {
       next.status = "ok";
       next.lastError = "";
@@ -1258,12 +1331,15 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
         chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
           if (!shopifyTestMode) updateShopifyForMonitor(next, snapshot.liveData).catch(() => {});
         });
+      } else if (wasError) {
+        desiredShopifyStatus = "active";
       }
     }
   } catch (error) {
     next.lastCheckedAt = new Date().toISOString();
     next.status = "error";
     next.lastError = error.message;
+    if (!wasError) desiredShopifyStatus = "draft";
   }
 
   next.lastRunReason = reason;
@@ -1277,6 +1353,12 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
       await saveMonitors(fresh);
     }
   });
+
+  if (desiredShopifyStatus) {
+    chrome.storage.local.get("shopifyTestMode").then(({ shopifyTestMode }) => {
+      if (!shopifyTestMode) syncMonitorShopifyStatus(next, desiredShopifyStatus).catch(() => {});
+    });
+  }
 }
 
 async function createMonitor(payload, currentTabId = null) {
