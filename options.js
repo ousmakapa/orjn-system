@@ -6701,6 +6701,44 @@ monitorMetaContent?.addEventListener("click", (event) => {
   event.stopPropagation();
   selectMonitorsByStoreMeta(chip.dataset.metaKind, chip.dataset.metaValue);
 });
+async function _autoSyncToggleAffectedMonitors(changedKeys) {
+  if (!changedKeys.size) return;
+  if (!await isConnected().catch(() => false)) return;
+  const targets = allMonitors.filter(m => {
+    if (!m.shopifyProductId && !m.productData?.sku) return false;
+    const pd = m.productData || {};
+    const rawType = String(pd.type || "").trim();
+    const type = rawType || "Uncategorized";
+    const model = getMonitorShoesTypeInfo(m).model;
+    if (!model) return false;
+    return changedKeys.has(getShoesTypeToggleKey(type, model));
+  });
+  if (!targets.length) {
+    if (monitorMetaStatus) monitorMetaStatus.textContent = "Toggle saved. No linked Shopify products to update.";
+    return;
+  }
+  const total = targets.length;
+  const context = {};
+  let done = 0;
+  let failed = 0;
+  for (const monitor of targets) {
+    if (monitorMetaStatus) monitorMetaStatus.textContent = `Syncing Shopify… ${done + 1}/${total}`;
+    try {
+      await updateMonitorShopifyMetadata(monitor, context);
+    } catch (_) {
+      failed++;
+    }
+    done++;
+  }
+  if (monitorMetaStatus) {
+    monitorMetaStatus.textContent = failed
+      ? `Synced ${done - failed}/${total} to Shopify (${failed} failed).`
+      : `Synced ${total} product${total !== 1 ? "s" : ""} to Shopify.`;
+  }
+  clearShopifyProductsSnapshotCache();
+  scheduleDashboardAutoRefresh({ forceShopifyRefresh: true, delayMs: 500 });
+}
+
 monitorMetaContent?.addEventListener("change", async (event) => {
   const toggle = event.target.closest(".shoes-type-toggle-input");
   if (!toggle) return;
@@ -6720,7 +6758,8 @@ monitorMetaContent?.addEventListener("change", async (event) => {
   await saveShoesTypeMetafieldToggles();
   clearShopifyProductsSnapshotCache();
   refreshMonitorMetaContent();
-  monitorMetaStatus.textContent = `${_displayName || "Shoes type"} metafield ${toggle.checked ? "enabled" : "disabled"}. Run Update metadata to apply it in Shopify.`;
+  monitorMetaStatus.textContent = `${_displayName || "Shoes type"} metafield ${toggle.checked ? "enabled" : "disabled"}. Syncing Shopify…`;
+  _autoSyncToggleAffectedMonitors(new Set([key])).catch(() => {});
 });
 function _applyShoesTypeSelectionState() {
   if (!monitorMetaContent) return;
@@ -6739,11 +6778,12 @@ function _applyShoesTypeSelectionState() {
 
 async function _bulkSetShoesTypeToggles(enable) {
   let changed = false;
+  const changedKeys = new Set();
   for (const key of selectedShoesTypeKeys) {
     if (enable) {
-      if (!shoesTypeMetafieldEnabledNames.has(key)) { shoesTypeMetafieldEnabledNames.add(key); shoesTypeMetafieldDisabledNames.delete(key); changed = true; }
+      if (!shoesTypeMetafieldEnabledNames.has(key)) { shoesTypeMetafieldEnabledNames.add(key); shoesTypeMetafieldDisabledNames.delete(key); changed = true; changedKeys.add(key); }
     } else {
-      if (shoesTypeMetafieldEnabledNames.has(key)) { shoesTypeMetafieldEnabledNames.delete(key); shoesTypeMetafieldDisabledNames.add(key); changed = true; }
+      if (shoesTypeMetafieldEnabledNames.has(key)) { shoesTypeMetafieldEnabledNames.delete(key); shoesTypeMetafieldDisabledNames.add(key); changed = true; changedKeys.add(key); }
     }
   }
   const n = selectedShoesTypeKeys.size;
@@ -6752,7 +6792,8 @@ async function _bulkSetShoesTypeToggles(enable) {
     await saveShoesTypeMetafieldToggles();
     clearShopifyProductsSnapshotCache();
     refreshMonitorMetaContent();
-    if (monitorMetaStatus) monitorMetaStatus.textContent = `${n} metafield${n !== 1 ? "s" : ""} ${enable ? "enabled" : "disabled"}. Run Update metadata to apply.`;
+    if (monitorMetaStatus) monitorMetaStatus.textContent = `${n} metafield${n !== 1 ? "s" : ""} ${enable ? "enabled" : "disabled"}. Syncing Shopify…`;
+    _autoSyncToggleAffectedMonitors(changedKeys).catch(() => {});
   } else {
     _applyShoesTypeSelectionState();
   }
