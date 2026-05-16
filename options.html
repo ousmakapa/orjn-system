@@ -30,10 +30,6 @@
                 <input id="auto-interval-toggle" type="checkbox">
                 <span>Auto</span>
               </label>
-              <label class="toggle" id="test-mode-label" title="Enable to run checks without Shopify. Turn off to revert all changes made during test.">
-                <input id="test-mode-toggle" type="checkbox">
-                <span>Test mode</span>
-              </label>
               <button id="stop-checks" class="secondary danger" style="display:none">Stop checks</button>
             </div>
           </div>
@@ -54,6 +50,7 @@
                 <div class="header-button-row">
                   <button id="open-shopify-out-of-stock-btn" class="ghost">Open out of stock</button>
                   <button id="check-shopify-out-of-stock-btn" class="ghost">Check out of stock</button>
+                  <button id="open-us-size-audit-btn" class="ghost">Bad size audit</button>
                   <button id="open-sku-duplicates-btn" class="ghost">Duplicate SKU cleanup</button>
                 </div>
               </div>
@@ -65,6 +62,34 @@
             <div class="header-group">
               <button id="open-logs-btn" class="ghost">Logs</button>
               <button id="refresh-dashboard" class="ghost">Refresh</button>
+<button id="export-monitors-btn" class="ghost">Export JSON</button>
+              <label id="import-monitors-label" class="ghost" style="cursor:pointer;display:inline-flex;align-items:center">
+                Import JSON
+                <input id="import-monitors-input" type="file" accept=".json" style="display:none">
+              </label>
+            </div>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Local Backup</span>
+            <div class="header-group">
+              <button id="local-backup-set-btn" class="ghost">Set folder</button>
+              <button id="local-backup-reauth-btn" class="ghost" style="display:none">Re-authorize</button>
+              <button id="local-backup-clear-btn" class="inline-button danger" style="display:none">Clear</button>
+              <span id="local-backup-status" style="font-size:11px;color:var(--muted)"></span>
+            </div>
+            <div id="local-backup-info" style="font-size:11px;margin-top:4px;display:none;flex-direction:column;gap:2px">
+              <span id="local-backup-folder" style="color:var(--muted)"></span>
+              <span id="local-backup-last-write" style="color:var(--muted)"></span>
+            </div>
+          </div>
+          <div class="hdr-sep"></div>
+          <div class="header-cluster">
+            <span class="header-cluster-label">Google Drive</span>
+            <div class="header-group">
+              <button id="drive-backup-btn" class="ghost">Backup to Drive</button>
+              <button id="drive-restore-btn" class="ghost">Restore from Drive</button>
+              <span id="drive-backup-info" style="font-size:11px;color:var(--muted)"></span>
             </div>
           </div>
         </div>
@@ -87,6 +112,7 @@
             <div class="header-group">
               <button id="select-all" class="inline-button">Select all</button>
               <button id="deselect-all" class="inline-button">Deselect</button>
+              <button id="open-bulk-editor-btn" class="inline-button" disabled>Bulk edit</button>
               <input id="range-from" type="number" min="1" class="range-input" placeholder="#">
               <span style="color:var(--muted);font-size:12px">–</span>
               <input id="range-to" type="number" min="1" class="range-input" placeholder="#">
@@ -98,26 +124,30 @@
             <span class="header-cluster-label">Checks</span>
             <div class="header-group">
               <button id="check-all" class="secondary" disabled>Check all</button>
+              <button id="check-saved" class="secondary" disabled>Check saved</button>
               <button id="bulk-check" class="secondary" disabled>Check selected</button>
+              <button id="bulk-first-capture" class="secondary" disabled>First capture selected</button>
             </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-cluster">
+          <div class="header-cluster header-cluster--sync">
             <span class="header-cluster-label">Shopify Sync</span>
             <div class="header-group">
               <button id="bulk-import" class="import-btn" disabled>Import to Shopify</button>
-              <button id="bulk-update-metadata" class="secondary" disabled>Update metadata</button>
+              <button id="smart-import-all" class="import-btn" disabled>Import all</button>
+              <button id="bulk-update-shopify" class="secondary" disabled>Update Shopify</button>
+              <button id="bulk-delete-unconverted-variants" class="inline-button danger" disabled>Bad sizes</button>
               <button id="stop-import" class="inline-button danger" style="display:none">Stop Import</button>
-              <button id="undo-import" class="inline-button" style="display:none">Undo Import</button>
             </div>
           </div>
           <div class="hdr-sep"></div>
-          <div class="header-cluster">
+          <div class="header-cluster header-cluster--cleanup">
             <span class="header-cluster-label">Cleanup</span>
             <div class="header-group">
               <button id="undo-last" class="inline-button" disabled>Undo (0)</button>
               <button id="bulk-delete" class="inline-button danger" disabled>Delete selected</button>
-              <button id="bulk-delete-shopify" class="inline-button danger" disabled>Delete from Shopify + Monitors</button>
+              <button id="bulk-delete-shopify" class="inline-button danger" disabled>Shopify + Monitors</button>
+              <button id="bulk-delete-shopify-only" class="inline-button danger" disabled>Delete Shopify only</button>
             </div>
           </div>
         </div>
@@ -149,6 +179,8 @@
 
       </section>
 
+      <div id="shopify-sync-status" class="dashboard-sync-status" role="status" aria-live="polite"></div>
+
       <section id="dashboard-stats" class="stats-grid"></section>
 
       <div class="filter-bar">
@@ -164,7 +196,29 @@
           <option value="changed-desc">Last changed</option>
           <option value="checked-desc">Last checked</option>
         </select>
+        <button id="clear-all-filters" class="filter-clear-all">Clear all filters</button>
       </div>
+
+      <section id="bulk-editor-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Bulk Monitor Editor</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button id="bulk-editor-apply-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Apply to selected</button>
+            <button id="bulk-editor-close-btn" class="ghost" style="font-size:11px;padding:4px 10px">× Close</button>
+          </div>
+        </div>
+        <div id="bulk-editor-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
+        <div class="bulk-editor-grid">
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="type"><span>Type</span><input data-bulk-field="type" type="text" placeholder="Basketball"></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="gender"><span>Gender</span><select data-bulk-field="gender"><option value="">Size conversion gender</option><option value="Men">Men</option><option value="Women">Women</option></select></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="genderDisplay"><span>Display gender</span><select data-bulk-field="genderDisplay"><option value="">Shopify display gender</option><option value="Men">Men</option><option value="Women">Women</option><option value="both">Men + Women</option></select></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="brand"><span>Brand</span><input data-bulk-field="brand" type="text" placeholder="Nike"></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="color"><span>Color</span><input data-bulk-field="color" type="text" placeholder="Black"></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="colorFinal"><span>Color final</span><input data-bulk-field="colorFinal" type="text" placeholder="Black"></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="cleatType"><span>Cleat type</span><input data-bulk-field="cleatType" type="text" placeholder="Indoor, Turf, Firm Ground"></div>
+          <div class="bulk-editor-field"><input type="checkbox" data-bulk-toggle="priceAdjustment"><span>Added amount</span><input data-bulk-field="priceAdjustment" type="number" step="1" placeholder="80"></div>
+        </div>
+      </section>
 
       <section id="logs-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
@@ -221,7 +275,7 @@
           <div id="monitor-duplicates-list" style="max-height:360px;overflow-y:auto"></div>
         </section>
 
-        <section id="sku-duplicates-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+      <section id="sku-duplicates-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
           <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Duplicate SKU Cleanup</span>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -236,18 +290,80 @@
         <div id="sku-duplicates-list" style="max-height:480px;overflow-y:auto"></div>
       </section>
 
+      <section id="us-size-audit-panel" style="display:none;margin-bottom:0;background:var(--vault);border-bottom:1px solid var(--border);overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted)">Bad Size Audit</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button id="us-size-audit-refresh-btn" class="ghost" style="font-size:11px;padding:4px 10px">Refresh</button>
+            <button id="us-size-audit-select-all-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Select all</button>
+            <button id="us-size-audit-deselect-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Deselect all</button>
+            <button id="us-size-audit-delete-btn" class="inline-button danger" style="font-size:11px;padding:4px 10px">Remove selected bad sizes</button>
+            <button id="us-size-audit-update-metadata-btn" class="inline-button" style="font-size:11px;padding:4px 10px">Update metadata</button>
+            <button id="close-us-size-audit-btn" class="ghost" style="font-size:11px;padding:4px 10px">× Close</button>
+          </div>
+        </div>
+        <div id="us-size-audit-status" style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)"></div>
+        <div id="us-size-audit-list" style="max-height:480px;overflow-y:auto"></div>
+      </section>
+
       <section id="monitor-grid" class="monitor-grid"></section>
       <section id="monitor-detail" class="monitor-detail" style="display:none"></section>
 
     </main>
 
-    <section id="shopify-meta-section" style="margin-top:0;padding:20px 24px;background:var(--vault);border-top:1px solid var(--border);display:none">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-        <h2 style="font-size:13px;font-weight:800;margin:0;text-transform:uppercase;letter-spacing:0.1em">Store Data</h2>
-        <button id="fetch-meta-btn" class="secondary" style="font-size:11px;padding:5px 12px">Refresh</button>
-        <span id="fetch-meta-status" style="font-size:11px;color:var(--muted)"></span>
+    <section id="check-batches-panel" class="data-panel-section">
+      <div class="check-batches-row">
+        <div>
+          <h2 class="data-panel-title">Check Batches</h2>
+          <p class="data-panel-subtitle">Locked from first created to last created</p>
+        </div>
+        <div class="check-batches-controls">
+          <button id="open-error-section-btn" class="inline-button">Open errors</button>
+          <button id="select-all-batches-btn" class="inline-button">Select all batches</button>
+          <button id="clear-batches-btn" class="inline-button">Clear batches</button>
+          <label class="toggle" title="After this batch finishes, continue with later batches only">
+            <input id="continue-check-toggle" type="checkbox">
+            <span>Continue check</span>
+          </label>
+        </div>
       </div>
-      <div id="shopify-meta-content" style="display:flex;flex-direction:column;gap:16px"></div>
+      <div id="check-batch-summary" class="check-batch-summary">No batches selected</div>
+      <div id="check-batch-grid" class="check-batch-grid" aria-label="Check batches"></div>
+      <div id="batch-check-status" class="batch-check-status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section id="shopify-meta-section" class="data-panel-section" style="display:none">
+      <details class="data-panel-details">
+        <summary>
+          <span class="data-panel-title">Store Data</span>
+          <span id="fetch-meta-status" class="data-panel-status"></span>
+        </summary>
+        <div class="data-panel-toolbar">
+          <button id="fetch-meta-btn" class="secondary" style="font-size:11px;padding:5px 12px">Refresh</button>
+          <button id="clear-meta-filter-btn" class="inline-button" style="font-size:11px;padding:5px 12px;display:none">Clear store filter</button>
+        </div>
+        <div id="shopify-meta-content" style="display:flex;flex-direction:column;gap:16px"></div>
+      </details>
+    </section>
+
+    <section id="monitor-meta-section" class="data-panel-section" style="display:none">
+      <details class="data-panel-details">
+        <summary>
+          <span class="data-panel-title">Monitor Data</span>
+          <span id="monitor-meta-status" class="data-panel-status"></span>
+        </summary>
+        <div class="data-panel-toolbar">
+          <button id="refresh-monitor-meta-btn" class="secondary" style="font-size:11px;padding:5px 12px">Refresh</button>
+          <button id="clear-monitor-meta-filter-btn" class="inline-button" style="font-size:11px;padding:5px 12px;display:none">Clear monitor filter</button>
+        </div>
+        <div id="shoes-type-selection-bar" style="display:none;align-items:center;gap:8px;padding:6px 14px;border-bottom:1px solid var(--border);background:var(--vault);font-size:11px;font-weight:700;color:var(--muted)">
+          <span id="st-sel-count"></span>
+          <button id="st-sel-enable-btn" class="inline-button" style="font-size:11px;padding:3px 10px">Enable all</button>
+          <button id="st-sel-disable-btn" class="inline-button" style="font-size:11px;padding:3px 10px">Disable all</button>
+          <button id="st-sel-clear-btn" class="ghost" style="font-size:11px;padding:3px 10px;margin-left:auto">Clear selection</button>
+        </div>
+        <div id="monitor-meta-content" style="display:flex;flex-direction:column;gap:16px"></div>
+      </details>
     </section>
 
     <script type="module" src="options.js"></script>
