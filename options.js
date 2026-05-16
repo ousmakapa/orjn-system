@@ -765,7 +765,7 @@ function getMonitorExpectedMetafields(monitor = {}) {
     genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
     color ? { namespace: "custom", key: "color", value: color, type: "single_line_text_field" } : null,
     type ? { namespace: "custom", key: "product_type", value: type, type: "single_line_text_field" } : null,
-    !isFootball && shoesType.model && isShoesTypeMetafieldEnabled(type, shoesType.model) ? { namespace: "custom", key: "shoes_type", value: shoesType.model, type: "single_line_text_field" } : null,
+    !isFootball && shoesType.model && isShoesTypeMetafieldEnabled(type || "Uncategorized", shoesType.model) ? { namespace: "custom", key: "shoes_type", value: shoesType.model, type: "single_line_text_field" } : null,
     isFootball && cleatValue && isShoesTypeMetafieldEnabled("Football", cleatValue) ? { namespace: "custom", key: "cleats", value: cleatValue, type: "single_line_text_field" } : null
   ].filter(Boolean);
 }
@@ -799,11 +799,11 @@ async function loadShoesTypeMetafieldToggles() {
   const enabledNames = Array.isArray(stored?.[SHOES_TYPE_METAFIELD_ENABLED_KEY])
     ? stored[SHOES_TYPE_METAFIELD_ENABLED_KEY]
     : [];
-  shoesTypeMetafieldEnabledNames = new Set(enabledNames.map(getShoesTypeToggleKey).filter(Boolean));
+  shoesTypeMetafieldEnabledNames = new Set(enabledNames.map(normalizeMetaValue).filter(Boolean));
   const disabledNames = Array.isArray(stored?.[SHOES_TYPE_METAFIELD_DISABLED_KEY])
     ? stored[SHOES_TYPE_METAFIELD_DISABLED_KEY]
     : [];
-  shoesTypeMetafieldDisabledNames = new Set(disabledNames.map(getShoesTypeToggleKey).filter(Boolean));
+  shoesTypeMetafieldDisabledNames = new Set(disabledNames.map(normalizeMetaValue).filter(Boolean));
 }
 
 async function saveShoesTypeMetafieldToggles() {
@@ -5740,13 +5740,13 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes[SHOES_TYPE_METAFIELD_ENABLED_KEY]) {
     const names = Array.isArray(changes[SHOES_TYPE_METAFIELD_ENABLED_KEY].newValue)
       ? changes[SHOES_TYPE_METAFIELD_ENABLED_KEY].newValue : [];
-    shoesTypeMetafieldEnabledNames = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
+    shoesTypeMetafieldEnabledNames = new Set(names.map(normalizeMetaValue).filter(Boolean));
     togglesChanged = true;
   }
   if (changes[SHOES_TYPE_METAFIELD_DISABLED_KEY]) {
     const names = Array.isArray(changes[SHOES_TYPE_METAFIELD_DISABLED_KEY].newValue)
       ? changes[SHOES_TYPE_METAFIELD_DISABLED_KEY].newValue : [];
-    shoesTypeMetafieldDisabledNames = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
+    shoesTypeMetafieldDisabledNames = new Set(names.map(normalizeMetaValue).filter(Boolean));
     togglesChanged = true;
   }
   if (togglesChanged) {

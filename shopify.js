@@ -762,7 +762,7 @@ async function getShoesTypeMetafieldEnabledSet() {
   const names = Array.isArray(stored?.[SHOES_TYPE_METAFIELD_ENABLED_KEY])
     ? stored[SHOES_TYPE_METAFIELD_ENABLED_KEY]
     : [];
-  shoesTypeMetafieldEnabledCache = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
+  shoesTypeMetafieldEnabledCache = new Set(names.map(k => cleanFilterValue(k).toLowerCase()).filter(Boolean));
   return shoesTypeMetafieldEnabledCache;
 }
 
@@ -802,7 +802,7 @@ async function buildProductFilterData(pd = {}, meta = {}, monitorUrl = "") {
     ].filter(Boolean);
     disabledCleatsMetafield = !cleatsEnabled;
   } else {
-    const shoesTypeEnabled = shoesTypeModel && enabledSet.has(getShoesTypeToggleKey(pd.type || "", shoesTypeModel));
+    const shoesTypeEnabled = shoesTypeModel && enabledSet.has(getShoesTypeToggleKey(pd.type || "Uncategorized", shoesTypeModel));
     metafields = [
       genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
       colorValues.length ? { namespace: "custom", key: "color", value: colorValues[0], type: "single_line_text_field" } : null,
