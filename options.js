@@ -3940,7 +3940,8 @@ monitorDetail.addEventListener("click", async (event) => {
     chrome.runtime.sendMessage({
       type: "update-monitor",
       payload: { id: monitorId, productData: updated }
-    }).then(async () => { await silentRefresh(); });
+    }).then(async () => { await silentRefresh(); })
+      .catch(() => { target.disabled = false; target.textContent = "Save"; });
     return;
   }
 

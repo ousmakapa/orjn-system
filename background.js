@@ -345,6 +345,7 @@ function removeIgnoredSizesFromMonitor(monitor = {}, ignoredSizes = []) {
 
 // Serialise all storage writes so concurrent runMonitor calls don't overwrite each other.
 let storageLock = Promise.resolve();
+const _runningMonitorIds = new Set();
 function withStorageLock(fn) {
   const next = storageLock.then(() => fn());
   storageLock = next.catch(() => {});
@@ -2726,6 +2727,8 @@ async function captureSnapshotInHiddenTab(monitor, captureFullPage = false, _ret
 }
 
 async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, isBatch = false, monitorHint = null) {
+  if (_runningMonitorIds.has(monitorId)) return null;
+  _runningMonitorIds.add(monitorId);
   _startKeepAlive();
   try {
     let monitor = await getMonitorById(monitorId).catch(() => null);
@@ -3115,6 +3118,7 @@ async function runMonitor(monitorId, reason = "scheduled", currentTabId = null, 
     }
     return next;
   } finally {
+    _runningMonitorIds.delete(monitorId);
     _stopKeepAlive();
   }
 }

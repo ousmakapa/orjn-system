@@ -1,16 +1,23 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzZp3wmeh6nIthiqxCWv+9nhRH94i+Oll5hB2H4Bqpy+8JR5iK4s7Ff1UMPvFuFmvw99ufZg3Z0UG1/fqLISBNnvlWMCPhtAsnMjGuQz7qcbwzozk7kscsLv8ei5c20LTeieEDm0TllVt3/CZ05yXS9AJu/MjWuGAeJFh+uUh/0VXow7Otp0GPnt4miDO2BxLVNFzEuterO5RtUgT3ofR3bXj7605g3WrZ7ZKL1YP3C4z+t0z5N/U1qU3BMPbz4Tqs7Pqm3jZli6S/6d8WA/te41W5UAl4c4D7CS5VJ4XQcU5z8TK8hyS1tZF8PU3e0veVktNh6U+e7vLUqyqlLjwYQIDAQAB",
   "name": "Distill-Style Monitor",
   "version": "0.1.0",
   "description": "Monitor full pages or specific elements for changes and get browser notifications.",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "alarms",
     "notifications",
     "tabs",
     "scripting",
-    "identity"
+    "identity",
+    "cookies"
   ],
+  "oauth2": {
+    "client_id": "PASTE_YOUR_CLIENT_ID_HERE.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.appdata"]
+  },
   "host_permissions": [
     "<all_urls>"
   ],
