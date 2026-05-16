@@ -747,8 +747,13 @@ function cleanFilterValue(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function getShoesTypeToggleKey(value = "") {
-  return cleanFilterValue(value).toLowerCase();
+function getShoesTypeToggleKey(typeOrCombined = "", model = "") {
+  if (model) {
+    const t = cleanFilterValue(typeOrCombined).toLowerCase();
+    const m = cleanFilterValue(model).toLowerCase();
+    return t && m ? `${t}||${m}` : (m || t);
+  }
+  return cleanFilterValue(typeOrCombined).toLowerCase();
 }
 
 async function getShoesTypeMetafieldEnabledSet() {
@@ -788,7 +793,7 @@ async function buildProductFilterData(pd = {}, meta = {}, monitorUrl = "") {
 
   if (isFootball) {
     const cleatsValue = pd.cleatType || detectDsgCleatType(monitorUrl) || detectCleatTypeFromName(pd.name) || shoesTypeModel || "Unknown";
-    const cleatsEnabled = enabledSet.has(getShoesTypeToggleKey(cleatsValue));
+    const cleatsEnabled = enabledSet.has(getShoesTypeToggleKey("Football", cleatsValue));
     metafields = [
       genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
       colorValues.length ? { namespace: "custom", key: "color", value: colorValues[0], type: "single_line_text_field" } : null,
@@ -797,7 +802,7 @@ async function buildProductFilterData(pd = {}, meta = {}, monitorUrl = "") {
     ].filter(Boolean);
     disabledCleatsMetafield = !cleatsEnabled;
   } else {
-    const shoesTypeEnabled = shoesTypeModel && enabledSet.has(getShoesTypeToggleKey(shoesTypeModel));
+    const shoesTypeEnabled = shoesTypeModel && enabledSet.has(getShoesTypeToggleKey(pd.type || "", shoesTypeModel));
     metafields = [
       genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
       colorValues.length ? { namespace: "custom", key: "color", value: colorValues[0], type: "single_line_text_field" } : null,

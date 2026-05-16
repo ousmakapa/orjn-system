@@ -765,8 +765,8 @@ function getMonitorExpectedMetafields(monitor = {}) {
     genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
     color ? { namespace: "custom", key: "color", value: color, type: "single_line_text_field" } : null,
     type ? { namespace: "custom", key: "product_type", value: type, type: "single_line_text_field" } : null,
-    !isFootball && shoesType.model && isShoesTypeMetafieldEnabled(shoesType.model) ? { namespace: "custom", key: "shoes_type", value: shoesType.model, type: "single_line_text_field" } : null,
-    isFootball && cleatValue && isShoesTypeMetafieldEnabled(cleatValue) ? { namespace: "custom", key: "cleats", value: cleatValue, type: "single_line_text_field" } : null
+    !isFootball && shoesType.model && isShoesTypeMetafieldEnabled(type, shoesType.model) ? { namespace: "custom", key: "shoes_type", value: shoesType.model, type: "single_line_text_field" } : null,
+    isFootball && cleatValue && isShoesTypeMetafieldEnabled("Football", cleatValue) ? { namespace: "custom", key: "cleats", value: cleatValue, type: "single_line_text_field" } : null
   ].filter(Boolean);
 }
 
@@ -780,12 +780,17 @@ function getMonitorShoesTypeInfo(monitor = {}) {
   };
 }
 
-function getShoesTypeToggleKey(value = "") {
-  return normalizeMetaValue(value);
+function getShoesTypeToggleKey(typeOrCombined = "", model = "") {
+  if (model) {
+    const t = normalizeMetaValue(typeOrCombined);
+    const m = normalizeMetaValue(model);
+    return t && m ? `${t}||${m}` : (m || t);
+  }
+  return normalizeMetaValue(typeOrCombined);
 }
 
-function isShoesTypeMetafieldEnabled(value = "") {
-  const key = getShoesTypeToggleKey(value);
+function isShoesTypeMetafieldEnabled(type = "", model = "") {
+  const key = getShoesTypeToggleKey(type, model);
   return !!key && shoesTypeMetafieldEnabledNames.has(key);
 }
 
@@ -828,6 +833,14 @@ function monitorMatchesStoreMeta(monitor, kind, value) {
     return normalizeMetaValue(getMonitorShoesTypeInfo(monitor).category) === needle;
   }
   if (kind === "shoes_type") {
+    const sepIdx = needle.indexOf("||");
+    if (sepIdx >= 0) {
+      const filterType = needle.slice(0, sepIdx);
+      const filterModel = needle.slice(sepIdx + 2);
+      const monType = normalizeMetaValue(monitor.productData?.type || "");
+      const monModel = normalizeMetaValue(getMonitorShoesTypeInfo(monitor).model);
+      return monType === filterType && monModel === filterModel;
+    }
     return normalizeMetaValue(getMonitorShoesTypeInfo(monitor).model) === needle;
   }
   if (kind?.startsWith("metafield:")) {
@@ -6536,7 +6549,7 @@ function renderProductNameGroups() {
     let _autoChanged = false;
     for (const [model, mons] of modelEntries) {
       if (model && mons.length >= 5) {
-        const key = getShoesTypeToggleKey(model);
+        const key = getShoesTypeToggleKey(g.type, model);
         if (key && !shoesTypeMetafieldEnabledNames.has(key) && !shoesTypeMetafieldDisabledNames.has(key)) {
           shoesTypeMetafieldEnabledNames.add(key);
           _autoChanged = true;
@@ -6549,16 +6562,18 @@ function renderProductNameGroups() {
       const lazyId = `${g.type}||${g.brand}||${model || "__nomodel__"}`;
       _lazyModelItemsCache.set(lazyId, monitors.map(renderMonitorItem).join(""));
       if (model) {
-        const enabled = isShoesTypeMetafieldEnabled(model);
+        const combinedKey = `${g.type}||${model}`;
+        const enabled = isShoesTypeMetafieldEnabled(g.type, model);
+        const filterValue = combinedKey;
         return `<details style="border-top:1px solid var(--border)">
           <summary style="font-size:11px;font-weight:600;cursor:pointer;color:var(--ink);list-style:none;display:flex;justify-content:space-between;align-items:center;padding:5px 12px;user-select:none;background:var(--void)">
             <span style="display:flex;align-items:center;gap:8px;min-width:0">
               <label class="shoes-type-toggle" title="${escapeHtml(enabled ? "This shoes type metafield will be written to Shopify" : "This shoes type metafield is off and will not be written")}">
-                <input type="checkbox" class="shoes-type-toggle-input" data-shoes-type="${escapeHtml(model)}"${enabled ? " checked" : ""}>
+                <input type="checkbox" class="shoes-type-toggle-input" data-shoes-type="${escapeHtml(combinedKey)}"${enabled ? " checked" : ""}>
                 <span class="shoes-type-toggle-track"></span>
                 <em>${enabled ? "On" : "Off"}</em>
               </label>
-              <button type="button" class="product-name-filter-chip meta-select-chip${activeStoreMetaFilters.some(f => f.kind === "shoes_type" && normalizeMetaValue(f.value) === normalizeMetaValue(model)) ? " active" : ""}" data-meta-kind="shoes_type" data-meta-value="${escapeHtml(model)}" style="--meta-color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="mf-sq"></span>${escapeHtml(model)}</button>
+              <button type="button" class="product-name-filter-chip meta-select-chip${activeStoreMetaFilters.some(f => f.kind === "shoes_type" && normalizeMetaValue(f.value) === normalizeMetaValue(filterValue)) ? " active" : ""}" data-meta-kind="shoes_type" data-meta-value="${escapeHtml(filterValue)}" style="--meta-color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="mf-sq"></span>${escapeHtml(model)}</button>
             </span>
             <strong style="font-family:'Jost',sans-serif;font-size:12px;color:var(--muted);font-weight:700;margin-left:8px">${monitors.length}</strong>
           </summary>
@@ -6690,8 +6705,10 @@ monitorMetaContent?.addEventListener("change", async (event) => {
   if (!toggle) return;
   event.preventDefault();
   event.stopPropagation();
-  const key = getShoesTypeToggleKey(toggle.dataset.shoesType || "");
+  const combined = toggle.dataset.shoesType || "";
+  const key = getShoesTypeToggleKey(combined);
   if (!key) return;
+  const _displayName = combined.includes("||") ? combined.slice(combined.indexOf("||") + 2) : combined;
   if (toggle.checked) {
     shoesTypeMetafieldEnabledNames.add(key);
     shoesTypeMetafieldDisabledNames.delete(key);
@@ -6702,7 +6719,7 @@ monitorMetaContent?.addEventListener("change", async (event) => {
   await saveShoesTypeMetafieldToggles();
   clearShopifyProductsSnapshotCache();
   refreshMonitorMetaContent();
-  monitorMetaStatus.textContent = `${toggle.dataset.shoesType || "Shoes type"} metafield ${toggle.checked ? "enabled" : "disabled"}. Run Update metadata to apply it in Shopify.`;
+  monitorMetaStatus.textContent = `${_displayName || "Shoes type"} metafield ${toggle.checked ? "enabled" : "disabled"}. Run Update metadata to apply it in Shopify.`;
 });
 function _applyShoesTypeSelectionState() {
   if (!monitorMetaContent) return;
