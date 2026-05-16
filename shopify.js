@@ -789,7 +789,7 @@ async function buildProductFilterData(pd = {}, meta = {}, monitorUrl = "") {
   const shoesType = deriveShoesType(pd);
   const shoesTypeModel = cleanFilterValue(typeof shoesType === "string" ? shoesType : shoesType?.model || "");
   const isFootball = /^football$/i.test(String(pd.type || ""));
-  const disabledSet = await getShoesTypeMetafieldDisabledSet();
+  const enabledSet = await getShoesTypeMetafieldEnabledSet();
   const genderValues = getGenderFilterValues(pd);
   const colorValues = normalizedColor ? [normalizedColor] : [];
 
@@ -799,23 +799,23 @@ async function buildProductFilterData(pd = {}, meta = {}, monitorUrl = "") {
 
   if (isFootball) {
     const cleatsValue = pd.cleatType || detectDsgCleatType(monitorUrl) || detectCleatTypeFromName(pd.name) || shoesTypeModel || "Unknown";
-    const cleatsExplicitlyDisabled = disabledSet.has(getShoesTypeToggleKey(cleatsValue));
+    const cleatsEnabled = enabledSet.has(getShoesTypeToggleKey(cleatsValue));
     metafields = [
       genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
       colorValues.length ? { namespace: "custom", key: "color", value: colorValues[0], type: "single_line_text_field" } : null,
       productType ? { namespace: "custom", key: "product_type", value: productType, type: "single_line_text_field" } : null,
-      !cleatsExplicitlyDisabled ? { namespace: "custom", key: "cleats", value: cleatsValue, type: "single_line_text_field" } : null
+      cleatsEnabled ? { namespace: "custom", key: "cleats", value: cleatsValue, type: "single_line_text_field" } : null
     ].filter(Boolean);
-    disabledCleatsMetafield = cleatsExplicitlyDisabled;
+    disabledCleatsMetafield = !cleatsEnabled;
   } else {
-    const shoesTypeExplicitlyDisabled = !!shoesTypeModel && disabledSet.has(getShoesTypeToggleKey(shoesTypeModel));
+    const shoesTypeEnabled = shoesTypeModel && enabledSet.has(getShoesTypeToggleKey(shoesTypeModel));
     metafields = [
       genderValues.length ? { namespace: "custom", key: "gender", value: genderValues.join(", "), type: "single_line_text_field" } : null,
       colorValues.length ? { namespace: "custom", key: "color", value: colorValues[0], type: "single_line_text_field" } : null,
       productType ? { namespace: "custom", key: "product_type", value: productType, type: "single_line_text_field" } : null,
-      (shoesTypeModel && !shoesTypeExplicitlyDisabled) ? { namespace: "custom", key: "shoes_type", value: shoesTypeModel, type: "single_line_text_field" } : null
+      shoesTypeEnabled ? { namespace: "custom", key: "shoes_type", value: shoesTypeModel, type: "single_line_text_field" } : null
     ].filter(Boolean);
-    disabledShoesTypeMetafield = shoesTypeExplicitlyDisabled;
+    disabledShoesTypeMetafield = !!shoesTypeModel && !shoesTypeEnabled;
   }
 
   return { brand, productType, metafields, disabledShoesTypeMetafield, disabledCleatsMetafield, isFootball };

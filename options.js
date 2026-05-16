@@ -786,7 +786,7 @@ function getShoesTypeToggleKey(value = "") {
 
 function isShoesTypeMetafieldEnabled(value = "") {
   const key = getShoesTypeToggleKey(value);
-  return !!key && !shoesTypeMetafieldDisabledNames.has(key);
+  return !!key && shoesTypeMetafieldEnabledNames.has(key);
 }
 
 async function loadShoesTypeMetafieldToggles() {
@@ -803,6 +803,7 @@ async function loadShoesTypeMetafieldToggles() {
 
 async function saveShoesTypeMetafieldToggles() {
   await chrome.storage.local.set({
+    [SHOES_TYPE_METAFIELD_ENABLED_KEY]: [...shoesTypeMetafieldEnabledNames].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })),
     [SHOES_TYPE_METAFIELD_DISABLED_KEY]: [...shoesTypeMetafieldDisabledNames].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
   });
 }
@@ -6259,7 +6260,7 @@ function _invalidateMetaSig() { _metaSigDirty = true; }
 
 function _computeMonitorMetaSig() {
   if (!_metaSigDirty && _metaSigCache !== null) return _metaSigCache;
-  const toggles = [...shoesTypeMetafieldDisabledNames].sort().join(",");
+  const toggles = [...shoesTypeMetafieldEnabledNames].sort().join(",");
   const mons = allMonitors.map(m => {
     const pd = m.productData;
     if (!pd?.name) return m.id + ":_";
@@ -6715,9 +6716,9 @@ async function _bulkSetShoesTypeToggles(enable) {
   let changed = false;
   for (const key of selectedShoesTypeKeys) {
     if (enable) {
-      if (shoesTypeMetafieldDisabledNames.has(key)) { shoesTypeMetafieldDisabledNames.delete(key); shoesTypeMetafieldEnabledNames.add(key); changed = true; }
+      if (!shoesTypeMetafieldEnabledNames.has(key)) { shoesTypeMetafieldEnabledNames.add(key); shoesTypeMetafieldDisabledNames.delete(key); changed = true; }
     } else {
-      if (!shoesTypeMetafieldDisabledNames.has(key)) { shoesTypeMetafieldDisabledNames.add(key); shoesTypeMetafieldEnabledNames.delete(key); changed = true; }
+      if (shoesTypeMetafieldEnabledNames.has(key)) { shoesTypeMetafieldEnabledNames.delete(key); shoesTypeMetafieldDisabledNames.add(key); changed = true; }
     }
   }
   const n = selectedShoesTypeKeys.size;
