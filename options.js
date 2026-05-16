@@ -5631,10 +5631,17 @@ filterType.addEventListener("change", () => {
 filterSort.addEventListener("change", () => { applyFilters(); scheduleSaveDashboardUiState(); });
 clearAllFiltersBtn.addEventListener("click", clearAllDashboardFilters);
 document.getElementById("refresh-dashboard").addEventListener("click", async () => {
-  clearShopifyProductsSnapshotCache();
-  await loadDashboard(true);
-  refreshUndoCount().catch(() => {});
-  refreshLogCount().catch(() => {});
+  const btn = document.getElementById("refresh-dashboard");
+  if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+  try {
+    clearShopifyProductsSnapshotCache();
+    _lastKnownSwVersion = -1;
+    await silentRefresh(true);
+    refreshUndoCount().catch(() => {});
+    refreshLogCount().catch(() => {});
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Refresh"; }
+  }
 });
 
 
