@@ -1245,7 +1245,7 @@ function _rebuildStatCaches() {
     if (isErrorMonitor(m)) { _statErrors++; errorParts.push(`${m.id}:${m.lastError || ""}`); }
     if (isSavedPendingMonitor(m)) _statPending++;
     if (m.changeCount > 0) _statChanged++;
-    if (m.shopifyProductId) _statShopifyLinked++;
+    if (isMonitorImportedToShopify(m)) _statShopifyLinked++;
     const sku = normalizeSku(m?.productData?.sku);
     if (sku) _skuFreq.set(sku, (_skuFreq.get(sku) || 0) + 1);
     else if (!isSavedPendingMonitor(m)) _statMissingSku++;
@@ -1257,7 +1257,7 @@ function _removeFromStatCaches(m) {
   if (isErrorMonitor(m)) { _statErrors--; _cachedErrorSig = null; }
   if (isSavedPendingMonitor(m)) _statPending--;
   if (m.changeCount > 0) _statChanged--;
-  if (m.shopifyProductId) _statShopifyLinked--;
+  if (isMonitorImportedToShopify(m)) _statShopifyLinked--;
   const sku = normalizeSku(m?.productData?.sku);
   if (sku) {
     const c = (_skuFreq.get(sku) || 1) - 1;
@@ -1273,7 +1273,7 @@ function _updateStatCaches(prev, updated) {
   if (wasPending !== isPending) _statPending += isPending ? 1 : -1;
   const wasChanged = prev.changeCount > 0, isChanged = updated.changeCount > 0;
   if (wasChanged !== isChanged) _statChanged += isChanged ? 1 : -1;
-  const wasLinked = !!prev.shopifyProductId, isLinked = !!updated.shopifyProductId;
+  const wasLinked = isMonitorImportedToShopify(prev), isLinked = isMonitorImportedToShopify(updated);
   if (wasLinked !== isLinked) _statShopifyLinked += isLinked ? 1 : -1;
   const oldSku = normalizeSku(prev?.productData?.sku);
   const newSku = normalizeSku(updated?.productData?.sku);
@@ -1986,7 +1986,7 @@ function renderSquare(monitor, groupKey = "") {
   const thumbCandidates = getMonitorCardThumbCandidates(monitor);
   const thumb = thumbCandidates[0] || "";
   const thumbCandidatesAttr = escapeHtml(JSON.stringify(thumbCandidates));
-  const importedBadge = monitor.shopifyProductId ? `<span class="square-imported">Shopify</span>` : "";
+  const importedBadge = isMonitorImportedToShopify(monitor) ? `<span class="square-imported">Shopify</span>` : "";
   const savedBadge = isSavedPendingMonitor(monitor) ? `<span class="square-saved">Saved</span>` : "";
   const outOfStockBadge = isMonitorFullyOutOfStock(monitor) ? `<span class="square-oos">Out of stock</span>` : "";
   const usOnlyBadge = monitor.hasUsOnlySizes ? `<span class="square-us-only" title="Has sizes with no EU conversion — import blocked">Bad sizes</span>` : "";
