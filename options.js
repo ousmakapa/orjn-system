@@ -5249,7 +5249,7 @@ bulkDeleteShopifyOnlyBtn.addEventListener("click", async () => {
       type: "bulk-update-monitors",
       payload: {
         ids: succeededIds,
-        monitorPatch: { shopifyProductId: null, shopifyProductHandle: null, shopifyStatus: null }
+        monitorPatch: { shopifyProductId: null, shopifyProductHandle: null, shopifySyncStatus: null }
       }
     }).catch(() => {});
   }
