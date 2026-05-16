@@ -5716,20 +5716,20 @@ function _flushPatches() {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
+  let togglesChanged = false;
   if (changes[SHOES_TYPE_METAFIELD_ENABLED_KEY]) {
     const names = Array.isArray(changes[SHOES_TYPE_METAFIELD_ENABLED_KEY].newValue)
-      ? changes[SHOES_TYPE_METAFIELD_ENABLED_KEY].newValue
-      : [];
+      ? changes[SHOES_TYPE_METAFIELD_ENABLED_KEY].newValue : [];
     shoesTypeMetafieldEnabledNames = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
-    _renderedMonitorSigs.clear();
-    renderAll();
-    refreshMonitorMetaContent();
+    togglesChanged = true;
   }
   if (changes[SHOES_TYPE_METAFIELD_DISABLED_KEY]) {
     const names = Array.isArray(changes[SHOES_TYPE_METAFIELD_DISABLED_KEY].newValue)
-      ? changes[SHOES_TYPE_METAFIELD_DISABLED_KEY].newValue
-      : [];
+      ? changes[SHOES_TYPE_METAFIELD_DISABLED_KEY].newValue : [];
     shoesTypeMetafieldDisabledNames = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
+    togglesChanged = true;
+  }
+  if (togglesChanged) {
     _renderedMonitorSigs.clear();
     renderAll();
     refreshMonitorMetaContent();

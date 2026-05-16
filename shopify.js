@@ -1,4 +1,4 @@
-import { addLog, canonicalizeBrand, deriveShoesType, SHOES_TYPE_METAFIELD_ENABLED_KEY, SHOES_TYPE_METAFIELD_DISABLED_KEY } from "./shared.js";
+import { addLog, canonicalizeBrand, deriveShoesType, SHOES_TYPE_METAFIELD_ENABLED_KEY } from "./shared.js";
 
 const SHOPIFY_ENV_KEYS = {
   shop: "SHOPIFY_SHOP",
@@ -23,12 +23,11 @@ let shopifyApiQueue = Promise.resolve();
 let nextShopifyApiRequestAt = 0;
 let productFilterMetafieldDefinitionsPromise = null;
 let shoesTypeMetafieldEnabledCache = null;
-let shoesTypeMetafieldDisabledCache = null;
 
 chrome.storage?.onChanged?.addListener((changes, areaName) => {
-  if (areaName !== "local") return;
-  if (changes[SHOES_TYPE_METAFIELD_ENABLED_KEY]) shoesTypeMetafieldEnabledCache = null;
-  if (changes[SHOES_TYPE_METAFIELD_DISABLED_KEY]) shoesTypeMetafieldDisabledCache = null;
+  if (areaName === "local" && changes[SHOES_TYPE_METAFIELD_ENABLED_KEY]) {
+    shoesTypeMetafieldEnabledCache = null;
+  }
 });
 
 function getMonitorLogMeta(monitor = {}) {
@@ -760,16 +759,6 @@ async function getShoesTypeMetafieldEnabledSet() {
     : [];
   shoesTypeMetafieldEnabledCache = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
   return shoesTypeMetafieldEnabledCache;
-}
-
-async function getShoesTypeMetafieldDisabledSet() {
-  if (shoesTypeMetafieldDisabledCache) return shoesTypeMetafieldDisabledCache;
-  const stored = await chrome.storage.local.get(SHOES_TYPE_METAFIELD_DISABLED_KEY).catch(() => ({}));
-  const names = Array.isArray(stored?.[SHOES_TYPE_METAFIELD_DISABLED_KEY])
-    ? stored[SHOES_TYPE_METAFIELD_DISABLED_KEY]
-    : [];
-  shoesTypeMetafieldDisabledCache = new Set(names.map(getShoesTypeToggleKey).filter(Boolean));
-  return shoesTypeMetafieldDisabledCache;
 }
 
 
